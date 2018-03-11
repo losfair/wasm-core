@@ -1,0 +1,9 @@
+[package]
+name = "wasm-core"
+version = "0.0.0"
+authors = ["losfair <zhy20000919@hotmail.com>"]
+description = "Portable WebAssembly implementation"
+license = "LGPL-3.0"
+keywords = ["wasm", "webassembly"]
+
+[dependencies]
