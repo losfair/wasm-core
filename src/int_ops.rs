@@ -68,6 +68,11 @@ pub fn i32_or(a: i32, b: i32) -> Value {
 }
 
 #[inline]
+pub fn i32_xor(a: i32, b: i32) -> Value {
+    Value::I32(a ^ b)
+}
+
+#[inline]
 pub fn i32_shl(a: i32, b: i32) -> Value {
     Value::I32(a << b)
 }
@@ -260,6 +265,11 @@ pub fn i64_and(a: i64, b: i64) -> Value {
 #[inline]
 pub fn i64_or(a: i64, b: i64) -> Value {
     Value::I64(a | b)
+}
+
+#[inline]
+pub fn i64_xor(a: i64, b: i64) -> Value {
+    Value::I64(a ^ b)
 }
 
 #[inline]

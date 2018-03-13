@@ -5,6 +5,8 @@ use opcode::Opcode;
 use int_ops;
 use value::Value;
 
+const PAGE_SIZE: usize = 65536;
+
 #[derive(Debug)]
 pub enum ExecuteError {
     Custom(String),
@@ -14,7 +16,9 @@ pub enum ExecuteError {
     OpcodeIndexOutOfBound,
     FrameIndexOutOfBound,
     LocalIndexOutOfBound,
+    GlobalIndexOutOfBound,
     UnreachableExecuted,
+    AddrOutOfBound,
     TypeMismatch
 }
 
@@ -25,6 +29,97 @@ impl ::core::fmt::Display for ExecuteError {
 }
 
 pub type ExecuteResult<T> = Result<T, ExecuteError>;
+
+#[derive(Copy, Clone, Debug)]
+pub enum Mutable {
+    Const,
+    Mut
+}
+
+pub struct RuntimeInfo {
+    mem: Memory,
+    store: Store,
+    global_addrs: Vec<usize>
+}
+
+#[derive(Clone)]
+pub struct RuntimeConfig {
+    pub mem_default_size_pages: usize,
+    pub mem_max_size_pages: Option<usize>
+}
+
+impl RuntimeInfo {
+    pub fn new(config: RuntimeConfig) -> RuntimeInfo {
+        RuntimeInfo {
+            mem: Memory::new(
+                config.mem_default_size_pages * PAGE_SIZE,
+                config.mem_max_size_pages.map(|v| v * PAGE_SIZE)
+            ),
+            store: Store {
+                values: Vec::new()
+            },
+            global_addrs: Vec::new()
+        }
+    }
+}
+
+pub struct Memory {
+    data: Vec<u8>,
+    max_size: Option<usize>
+}
+
+impl Memory {
+    pub fn new(default_size: usize, max_size: Option<usize>) -> Memory {
+        Memory {
+            data: vec![0; default_size],
+            max_size: max_size
+        }
+    }
+
+    pub fn current_size(&self) -> Value {
+        Value::I32((self.data.len() / PAGE_SIZE) as i32)
+    }
+
+    pub fn grow(&mut self, n_pages: i32) -> Value {
+        if n_pages <= 0 {
+            return Value::I32(-1);
+        }
+        let n_pages = n_pages as usize;
+
+        // FIXME: Hardcoded limit for now (prevent overflow etc.)
+        if n_pages > 16384 {
+            return Value::I32(-1);
+        }
+
+        let len_inc = n_pages * PAGE_SIZE;
+        let after_inc = self.data.len() + len_inc;
+
+        // Overflow?
+        if after_inc <= self.data.len() {
+            return Value::I32(-1);
+        }
+
+        // Check for the limit
+        if let Some(limit) = self.max_size {
+            if after_inc > limit {
+                return Value::I32(-1);
+            }
+        }
+
+        self.data.resize(after_inc, 0);
+
+        Value::I32((self.data.len() / PAGE_SIZE) as i32)
+    }
+}
+
+pub struct Store {
+    values: Vec<StoreValue>
+}
+
+#[derive(Copy, Clone, Debug)]
+pub enum StoreValue {
+    Global(Value, Mutable)
+}
 
 pub struct Frame {
     func_id: usize,
@@ -84,7 +179,8 @@ impl Frame {
 }
 
 impl Module {
-    pub fn execute(&self, initial_func: usize) -> ExecuteResult<()> {
+    pub fn execute(&self, rt_config: RuntimeConfig, initial_func: usize) -> ExecuteResult<()> {
+        let mut rt = RuntimeInfo::new(rt_config);
         let mut frames: Vec<Frame> = Vec::new();
         let mut ip: usize = 0;
 
@@ -108,6 +204,16 @@ impl Module {
                 Opcode::Drop => {
                     frame.pop_operand()?;
                 },
+                Opcode::Select => {
+                    let c = frame.pop_operand()?.get_i32()?;
+                    let val2 = frame.pop_operand()?;
+                    let val1 = frame.pop_operand()?;
+                    if c != 0 {
+                        frame.push_operand(val1);
+                    } else {
+                        frame.push_operand(val2);
+                    }
+                },
                 Opcode::Call(idx) => {
                     // "Push" IP so that we can restore it after the call is done.
                     frame.ip = Some(ip);
@@ -124,6 +230,9 @@ impl Module {
                     // NLL is required for this to work.
                     frames.push(Frame::setup(idx, current_func));
                 },
+                Opcode::CallIndirect(_) => {
+                    return Err(ExecuteError::NotImplemented);
+                },
                 Opcode::Return => {
                     // Pop the current frame.
                     frames.pop().unwrap();
@@ -136,6 +245,13 @@ impl Module {
                     ip = frame.ip.take().unwrap();
 
                     current_func = &self.functions[frame.func_id];
+                },
+                Opcode::CurrentMemory => {
+                    frame.push_operand(rt.mem.current_size());
+                },
+                Opcode::GrowMemory => {
+                    let n_pages = frame.pop_operand()?.get_i32()?;
+                    frame.push_operand(rt.mem.grow(n_pages));
                 },
                 Opcode::Nop => {},
                 Opcode::Jmp(target) => {
@@ -166,6 +282,34 @@ impl Module {
                 Opcode::TeeLocal(idx) => {
                     let v = frame.top_operand()?;
                     frame.set_local(idx, v)?;
+                },
+                Opcode::GetGlobal(idx) => {
+                    let idx = idx as usize;
+                    if idx >= rt.global_addrs.len() {
+                        return Err(ExecuteError::GlobalIndexOutOfBound);
+                    }
+                    let addr = rt.global_addrs[idx];
+                    if addr >= rt.store.values.len() {
+                        return Err(ExecuteError::AddrOutOfBound);
+                    }
+                    let v = rt.store.values[addr];
+                    match v {
+                        StoreValue::Global(v, _) => frame.push_operand(v),
+                        _ => return Err(ExecuteError::TypeMismatch)
+                    }
+                },
+                Opcode::SetGlobal(idx) => {
+                    let idx = idx as usize;
+                    if idx >= rt.global_addrs.len() {
+                        return Err(ExecuteError::GlobalIndexOutOfBound);
+                    }
+                    let addr = rt.global_addrs[idx];
+                    if addr >= rt.store.values.len() {
+                        return Err(ExecuteError::AddrOutOfBound);
+                    }
+
+                    let v = frame.pop_operand()?;
+                    rt.store.values[addr] = StoreValue::Global(v, Mutable::Mut);
                 },
                 Opcode::Unreachable => {
                     return Err(ExecuteError::UnreachableExecuted);
@@ -229,6 +373,11 @@ impl Module {
                     let c2 = frame.pop_operand()?;
                     let c1 = frame.pop_operand()?;
                     frame.push_operand(int_ops::i32_or(c1.get_i32()?, c2.get_i32()?));
+                },
+                Opcode::I32Xor => {
+                    let c2 = frame.pop_operand()?;
+                    let c1 = frame.pop_operand()?;
+                    frame.push_operand(int_ops::i32_xor(c1.get_i32()?, c2.get_i32()?));
                 },
                 Opcode::I32Shl => {
                     let c2 = frame.pop_operand()?;
@@ -373,6 +522,11 @@ impl Module {
                     let c1 = frame.pop_operand()?;
                     frame.push_operand(int_ops::i64_or(c1.get_i64()?, c2.get_i64()?));
                 },
+                Opcode::I64Xor => {
+                    let c2 = frame.pop_operand()?;
+                    let c1 = frame.pop_operand()?;
+                    frame.push_operand(int_ops::i64_xor(c1.get_i64()?, c2.get_i64()?));
+                },
                 Opcode::I64Shl => {
                     let c2 = frame.pop_operand()?;
                     let c1 = frame.pop_operand()?;
@@ -460,7 +614,7 @@ impl Module {
                     let v = frame.pop_operand()?;
                     frame.push_operand(int_ops::i64_extend_i32_s(v.get_i64()?));
                 },
-                _ => return Err(ExecuteError::NotImplemented)
+                //_ => return Err(ExecuteError::NotImplemented)
             }
         }
 

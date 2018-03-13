@@ -1,6 +1,6 @@
 use executor::{ExecuteResult, ExecuteError};
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize)]
 pub enum Value {
     Undef,
     I32(i32),
