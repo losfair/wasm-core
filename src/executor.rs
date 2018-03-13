@@ -2,6 +2,8 @@ use module::{Module, Function};
 use core::result::Result;
 use alloc::{Vec, String};
 use opcode::Opcode;
+use int_ops;
+use value::Value;
 
 #[derive(Debug)]
 pub enum ExecuteError {
@@ -11,7 +13,9 @@ pub enum ExecuteError {
     FunctionIndexOutOfBound,
     OpcodeIndexOutOfBound,
     FrameIndexOutOfBound,
-    LocalIndexOutOfBound
+    LocalIndexOutOfBound,
+    UnreachableExecuted,
+    TypeMismatch
 }
 
 impl ::core::fmt::Display for ExecuteError {
@@ -25,8 +29,8 @@ pub type ExecuteResult<T> = Result<T, ExecuteError>;
 pub struct Frame {
     func_id: usize,
     ip: Option<usize>,
-    operands: Vec<i64>,
-    locals: Vec<i64>
+    operands: Vec<Value>,
+    locals: Vec<Value>
 }
 
 impl Frame {
@@ -35,29 +39,29 @@ impl Frame {
             func_id: func_id,
             ip: None,
             operands: Vec::new(),
-            locals: vec![0; func.locals.len()]
+            locals: vec![Value::default(); func.locals.len()]
         }
     }
 
-    pub fn top_operand(&self) -> ExecuteResult<i64> {
+    pub fn top_operand(&self) -> ExecuteResult<Value> {
         match self.operands.last() {
             Some(v) => Ok(*v),
             None => Err(ExecuteError::OperandStackUnderflow)
         }
     }
 
-    pub fn pop_operand(&mut self) -> ExecuteResult<i64> {
+    pub fn pop_operand(&mut self) -> ExecuteResult<Value> {
         match self.operands.pop() {
             Some(v) => Ok(v),
             None => Err(ExecuteError::OperandStackUnderflow)
         }
     }
 
-    pub fn push_operand(&mut self, operand: i64) {
+    pub fn push_operand(&mut self, operand: Value) {
         self.operands.push(operand);
     }
 
-    pub fn set_local(&mut self, idx: u32, val: i64) -> ExecuteResult<()> {
+    pub fn set_local(&mut self, idx: u32, val: Value) -> ExecuteResult<()> {
         let idx = idx as usize;
 
         if idx >= self.locals.len() {
@@ -68,7 +72,7 @@ impl Frame {
         }
     }
 
-    pub fn get_local(&mut self, idx: u32) -> ExecuteResult<i64> {
+    pub fn get_local(&mut self, idx: u32) -> ExecuteResult<Value> {
         let idx = idx as usize;
 
         if idx >= self.locals.len() {
@@ -138,13 +142,13 @@ impl Module {
                     ip = target as usize;
                 },
                 Opcode::JmpIf(target) => {
-                    let v = frame.pop_operand()?;
+                    let v = frame.pop_operand()?.get_i32()?;
                     if v != 0 {
                         ip = target as usize;
                     }
                 },
                 Opcode::JmpTable(ref table, otherwise) => {
-                    let v = frame.pop_operand()? as usize;
+                    let v = frame.pop_operand()?.get_i32()? as usize;
                     if v < table.len() {
                         ip = table[v] as usize;
                     } else {
@@ -162,6 +166,299 @@ impl Module {
                 Opcode::TeeLocal(idx) => {
                     let v = frame.top_operand()?;
                     frame.set_local(idx, v)?;
+                },
+                Opcode::Unreachable => {
+                    return Err(ExecuteError::UnreachableExecuted);
+                },
+                Opcode::I32Const(v) => {
+                    frame.push_operand(Value::I32(v));
+                },
+                Opcode::I32Clz => {
+                    let v = frame.pop_operand()?;
+                    frame.push_operand(int_ops::i32_clz(v.get_i32()?));
+                },
+                Opcode::I32Ctz => {
+                    let v = frame.pop_operand()?;
+                    frame.push_operand(int_ops::i32_ctz(v.get_i32()?));
+                },
+                Opcode::I32Popcnt => {
+                    let v = frame.pop_operand()?;
+                    frame.push_operand(int_ops::i32_popcnt(v.get_i32()?));
+                },
+                Opcode::I32Add => {
+                    let c2 = frame.pop_operand()?;
+                    let c1 = frame.pop_operand()?;
+                    frame.push_operand(int_ops::i32_add(c1.get_i32()?, c2.get_i32()?));
+                },
+                Opcode::I32Sub => {
+                    let c2 = frame.pop_operand()?;
+                    let c1 = frame.pop_operand()?;
+                    frame.push_operand(int_ops::i32_sub(c1.get_i32()?, c2.get_i32()?));
+                },
+                Opcode::I32Mul => {
+                    let c2 = frame.pop_operand()?;
+                    let c1 = frame.pop_operand()?;
+                    frame.push_operand(int_ops::i32_mul(c1.get_i32()?, c2.get_i32()?));
+                },
+                Opcode::I32DivU => {
+                    let c2 = frame.pop_operand()?;
+                    let c1 = frame.pop_operand()?;
+                    frame.push_operand(int_ops::i32_div_u(c1.get_i32()?, c2.get_i32()?));
+                },
+                Opcode::I32DivS => {
+                    let c2 = frame.pop_operand()?;
+                    let c1 = frame.pop_operand()?;
+                    frame.push_operand(int_ops::i32_div_s(c1.get_i32()?, c2.get_i32()?));
+                },
+                Opcode::I32RemU => {
+                    let c2 = frame.pop_operand()?;
+                    let c1 = frame.pop_operand()?;
+                    frame.push_operand(int_ops::i32_rem_u(c1.get_i32()?, c2.get_i32()?));
+                },
+                Opcode::I32RemS => {
+                    let c2 = frame.pop_operand()?;
+                    let c1 = frame.pop_operand()?;
+                    frame.push_operand(int_ops::i32_rem_s(c1.get_i32()?, c2.get_i32()?));
+                },
+                Opcode::I32And => {
+                    let c2 = frame.pop_operand()?;
+                    let c1 = frame.pop_operand()?;
+                    frame.push_operand(int_ops::i32_and(c1.get_i32()?, c2.get_i32()?));
+                },
+                Opcode::I32Or => {
+                    let c2 = frame.pop_operand()?;
+                    let c1 = frame.pop_operand()?;
+                    frame.push_operand(int_ops::i32_or(c1.get_i32()?, c2.get_i32()?));
+                },
+                Opcode::I32Shl => {
+                    let c2 = frame.pop_operand()?;
+                    let c1 = frame.pop_operand()?;
+                    frame.push_operand(int_ops::i32_shl(c1.get_i32()?, c2.get_i32()?));
+                },
+                Opcode::I32ShrU => {
+                    let c2 = frame.pop_operand()?;
+                    let c1 = frame.pop_operand()?;
+                    frame.push_operand(int_ops::i32_shr_u(c1.get_i32()?, c2.get_i32()?));
+                },
+                Opcode::I32ShrS => {
+                    let c2 = frame.pop_operand()?;
+                    let c1 = frame.pop_operand()?;
+                    frame.push_operand(int_ops::i32_shr_s(c1.get_i32()?, c2.get_i32()?));
+                },
+                Opcode::I32Rotl => {
+                    let c2 = frame.pop_operand()?;
+                    let c1 = frame.pop_operand()?;
+                    frame.push_operand(int_ops::i32_rotl(c1.get_i32()?, c2.get_i32()?));
+                },
+                Opcode::I32Rotr => {
+                    let c2 = frame.pop_operand()?;
+                    let c1 = frame.pop_operand()?;
+                    frame.push_operand(int_ops::i32_rotr(c1.get_i32()?, c2.get_i32()?));
+                },
+                Opcode::I32Eqz => {
+                    let v = frame.pop_operand()?;
+                    frame.push_operand(int_ops::i32_eqz(v.get_i32()?));
+                },
+                Opcode::I32Eq => {
+                    let c2 = frame.pop_operand()?;
+                    let c1 = frame.pop_operand()?;
+                    frame.push_operand(int_ops::i32_eq(c1.get_i32()?, c2.get_i32()?));
+                },
+                Opcode::I32Ne => {
+                    let c2 = frame.pop_operand()?;
+                    let c1 = frame.pop_operand()?;
+                    frame.push_operand(int_ops::i32_ne(c1.get_i32()?, c2.get_i32()?));
+                },
+                Opcode::I32LtU => {
+                    let c2 = frame.pop_operand()?;
+                    let c1 = frame.pop_operand()?;
+                    frame.push_operand(int_ops::i32_lt_u(c1.get_i32()?, c2.get_i32()?));
+                },
+                Opcode::I32LtS => {
+                    let c2 = frame.pop_operand()?;
+                    let c1 = frame.pop_operand()?;
+                    frame.push_operand(int_ops::i32_lt_s(c1.get_i32()?, c2.get_i32()?));
+                },
+                Opcode::I32LeU => {
+                    let c2 = frame.pop_operand()?;
+                    let c1 = frame.pop_operand()?;
+                    frame.push_operand(int_ops::i32_le_u(c1.get_i32()?, c2.get_i32()?));
+                },
+                Opcode::I32LeS => {
+                    let c2 = frame.pop_operand()?;
+                    let c1 = frame.pop_operand()?;
+                    frame.push_operand(int_ops::i32_le_s(c1.get_i32()?, c2.get_i32()?));
+                },
+                Opcode::I32GtU => {
+                    let c2 = frame.pop_operand()?;
+                    let c1 = frame.pop_operand()?;
+                    frame.push_operand(int_ops::i32_gt_u(c1.get_i32()?, c2.get_i32()?));
+                },
+                Opcode::I32GtS => {
+                    let c2 = frame.pop_operand()?;
+                    let c1 = frame.pop_operand()?;
+                    frame.push_operand(int_ops::i32_gt_s(c1.get_i32()?, c2.get_i32()?));
+                },
+                Opcode::I32GeU => {
+                    let c2 = frame.pop_operand()?;
+                    let c1 = frame.pop_operand()?;
+                    frame.push_operand(int_ops::i32_ge_u(c1.get_i32()?, c2.get_i32()?));
+                },
+                Opcode::I32GeS => {
+                    let c2 = frame.pop_operand()?;
+                    let c1 = frame.pop_operand()?;
+                    frame.push_operand(int_ops::i32_ge_s(c1.get_i32()?, c2.get_i32()?));
+                },
+                Opcode::I32WrapI64 => {
+                    let v = frame.pop_operand()?;
+                    frame.push_operand(int_ops::i32_wrap_i64(v.get_i32()?));
+                },
+                Opcode::I64Const(v) => {
+                    frame.push_operand(Value::I64(v));
+                },
+                Opcode::I64Clz => {
+                    let v = frame.pop_operand()?;
+                    frame.push_operand(int_ops::i64_clz(v.get_i64()?));
+                },
+                Opcode::I64Ctz => {
+                    let v = frame.pop_operand()?;
+                    frame.push_operand(int_ops::i64_ctz(v.get_i64()?));
+                },
+                Opcode::I64Popcnt => {
+                    let v = frame.pop_operand()?;
+                    frame.push_operand(int_ops::i64_popcnt(v.get_i64()?));
+                },
+                Opcode::I64Add => {
+                    let c2 = frame.pop_operand()?;
+                    let c1 = frame.pop_operand()?;
+                    frame.push_operand(int_ops::i64_add(c1.get_i64()?, c2.get_i64()?));
+                },
+                Opcode::I64Sub => {
+                    let c2 = frame.pop_operand()?;
+                    let c1 = frame.pop_operand()?;
+                    frame.push_operand(int_ops::i64_sub(c1.get_i64()?, c2.get_i64()?));
+                },
+                Opcode::I64Mul => {
+                    let c2 = frame.pop_operand()?;
+                    let c1 = frame.pop_operand()?;
+                    frame.push_operand(int_ops::i64_mul(c1.get_i64()?, c2.get_i64()?));
+                },
+                Opcode::I64DivU => {
+                    let c2 = frame.pop_operand()?;
+                    let c1 = frame.pop_operand()?;
+                    frame.push_operand(int_ops::i64_div_u(c1.get_i64()?, c2.get_i64()?));
+                },
+                Opcode::I64DivS => {
+                    let c2 = frame.pop_operand()?;
+                    let c1 = frame.pop_operand()?;
+                    frame.push_operand(int_ops::i64_div_s(c1.get_i64()?, c2.get_i64()?));
+                },
+                Opcode::I64RemU => {
+                    let c2 = frame.pop_operand()?;
+                    let c1 = frame.pop_operand()?;
+                    frame.push_operand(int_ops::i64_rem_u(c1.get_i64()?, c2.get_i64()?));
+                },
+                Opcode::I64RemS => {
+                    let c2 = frame.pop_operand()?;
+                    let c1 = frame.pop_operand()?;
+                    frame.push_operand(int_ops::i64_rem_s(c1.get_i64()?, c2.get_i64()?));
+                },
+                Opcode::I64And => {
+                    let c2 = frame.pop_operand()?;
+                    let c1 = frame.pop_operand()?;
+                    frame.push_operand(int_ops::i64_and(c1.get_i64()?, c2.get_i64()?));
+                },
+                Opcode::I64Or => {
+                    let c2 = frame.pop_operand()?;
+                    let c1 = frame.pop_operand()?;
+                    frame.push_operand(int_ops::i64_or(c1.get_i64()?, c2.get_i64()?));
+                },
+                Opcode::I64Shl => {
+                    let c2 = frame.pop_operand()?;
+                    let c1 = frame.pop_operand()?;
+                    frame.push_operand(int_ops::i64_shl(c1.get_i64()?, c2.get_i64()?));
+                },
+                Opcode::I64ShrU => {
+                    let c2 = frame.pop_operand()?;
+                    let c1 = frame.pop_operand()?;
+                    frame.push_operand(int_ops::i64_shr_u(c1.get_i64()?, c2.get_i64()?));
+                },
+                Opcode::I64ShrS => {
+                    let c2 = frame.pop_operand()?;
+                    let c1 = frame.pop_operand()?;
+                    frame.push_operand(int_ops::i64_shr_s(c1.get_i64()?, c2.get_i64()?));
+                },
+                Opcode::I64Rotl => {
+                    let c2 = frame.pop_operand()?;
+                    let c1 = frame.pop_operand()?;
+                    frame.push_operand(int_ops::i64_rotl(c1.get_i64()?, c2.get_i64()?));
+                },
+                Opcode::I64Rotr => {
+                    let c2 = frame.pop_operand()?;
+                    let c1 = frame.pop_operand()?;
+                    frame.push_operand(int_ops::i64_rotr(c1.get_i64()?, c2.get_i64()?));
+                },
+                Opcode::I64Eqz => {
+                    let v = frame.pop_operand()?;
+                    frame.push_operand(int_ops::i64_eqz(v.get_i64()?));
+                },
+                Opcode::I64Eq => {
+                    let c2 = frame.pop_operand()?;
+                    let c1 = frame.pop_operand()?;
+                    frame.push_operand(int_ops::i64_eq(c1.get_i64()?, c2.get_i64()?));
+                },
+                Opcode::I64Ne => {
+                    let c2 = frame.pop_operand()?;
+                    let c1 = frame.pop_operand()?;
+                    frame.push_operand(int_ops::i64_ne(c1.get_i64()?, c2.get_i64()?));
+                },
+                Opcode::I64LtU => {
+                    let c2 = frame.pop_operand()?;
+                    let c1 = frame.pop_operand()?;
+                    frame.push_operand(int_ops::i64_lt_u(c1.get_i64()?, c2.get_i64()?));
+                },
+                Opcode::I64LtS => {
+                    let c2 = frame.pop_operand()?;
+                    let c1 = frame.pop_operand()?;
+                    frame.push_operand(int_ops::i64_lt_s(c1.get_i64()?, c2.get_i64()?));
+                },
+                Opcode::I64LeU => {
+                    let c2 = frame.pop_operand()?;
+                    let c1 = frame.pop_operand()?;
+                    frame.push_operand(int_ops::i64_le_u(c1.get_i64()?, c2.get_i64()?));
+                },
+                Opcode::I64LeS => {
+                    let c2 = frame.pop_operand()?;
+                    let c1 = frame.pop_operand()?;
+                    frame.push_operand(int_ops::i64_le_s(c1.get_i64()?, c2.get_i64()?));
+                },
+                Opcode::I64GtU => {
+                    let c2 = frame.pop_operand()?;
+                    let c1 = frame.pop_operand()?;
+                    frame.push_operand(int_ops::i64_gt_u(c1.get_i64()?, c2.get_i64()?));
+                },
+                Opcode::I64GtS => {
+                    let c2 = frame.pop_operand()?;
+                    let c1 = frame.pop_operand()?;
+                    frame.push_operand(int_ops::i64_gt_s(c1.get_i64()?, c2.get_i64()?));
+                },
+                Opcode::I64GeU => {
+                    let c2 = frame.pop_operand()?;
+                    let c1 = frame.pop_operand()?;
+                    frame.push_operand(int_ops::i64_ge_u(c1.get_i64()?, c2.get_i64()?));
+                },
+                Opcode::I64GeS => {
+                    let c2 = frame.pop_operand()?;
+                    let c1 = frame.pop_operand()?;
+                    frame.push_operand(int_ops::i64_ge_s(c1.get_i64()?, c2.get_i64()?));
+                },
+                Opcode::I64ExtendI32U => {
+                    let v = frame.pop_operand()?;
+                    frame.push_operand(int_ops::i64_extend_i32_u(v.get_i64()?));
+                },
+                Opcode::I64ExtendI32S => {
+                    let v = frame.pop_operand()?;
+                    frame.push_operand(int_ops::i64_extend_i32_s(v.get_i64()?));
                 },
                 _ => return Err(ExecuteError::NotImplemented)
             }
