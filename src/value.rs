@@ -29,4 +29,12 @@ impl Value {
             _ => Err(ExecuteError::TypeMismatch)
         }
     }
+
+    pub fn cast_to_i64(&self) -> i64 {
+        match *self {
+            Value::Undef => 0,
+            Value::I32(v) => v as i64,
+            Value::I64(v) => v
+        }
+    }
 }
