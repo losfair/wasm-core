@@ -139,6 +139,15 @@ impl Frame {
         }
     }
 
+    pub fn setup_no_locals(func_id: usize) -> Frame {
+        Frame {
+            func_id: func_id,
+            ip: None,
+            operands: Vec::new(),
+            locals: Vec::new()
+        }
+    }
+
     pub fn top_operand(&self) -> ExecuteResult<Value> {
         match self.operands.last() {
             Some(v) => Ok(*v),
@@ -231,7 +240,7 @@ impl Module {
                     // Now we've switched the current function to the new one.
                     // Initialize the new frame now.
 
-                    let mut new_frame = Frame::setup(idx, current_func);
+                    let mut new_frame = Frame::setup_no_locals(idx);
 
                     let ty = if current_func.typeidx < self.types.len() {
                         &self.types[current_func.typeidx]
