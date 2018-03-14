@@ -1,4 +1,4 @@
-use module::{Module, Function};
+use module::{Module, Function, Type};
 use core::result::Result;
 use alloc::{Vec, String};
 use opcode::Opcode;
@@ -12,6 +12,7 @@ pub enum ExecuteError {
     Custom(String),
     OperandStackUnderflow,
     NotImplemented,
+    TypeIdxIndexOufOfBound,
     FunctionIndexOutOfBound,
     OpcodeIndexOutOfBound,
     FrameIndexOutOfBound,
@@ -227,15 +228,42 @@ impl Module {
                     }
                     current_func = &self.functions[idx];
 
-                    // NLL is required for this to work.
-                    frames.push(Frame::setup(idx, current_func));
+                    // Now we've switched the current function to the new one.
+                    // Initialize the new frame now.
+
+                    let mut new_frame = Frame::setup(idx, current_func);
+
+                    let ty = if current_func.typeidx < self.types.len() {
+                        &self.types[current_func.typeidx]
+                    } else {
+                        return Err(ExecuteError::TypeIdxIndexOufOfBound);
+                    };
+
+                    let n_args = match *ty {
+                        Type::Func(ref args, _) => args.len(),
+                        _ => return Err(ExecuteError::TypeMismatch)
+                    };
+
+                    let n_locals = current_func.locals.len();
+
+                    // Initialize the new locals.
+                    new_frame.locals = vec![Value::default(); n_args + n_locals];
+
+                    for i in 0..n_args {
+                        let arg_v = frame.pop_operand()?;
+                        new_frame.locals[n_args - 1 - i] = arg_v;
+                    }
+
+                    // Push the newly-created frame.
+                    frames.push(new_frame);
+                    
                 },
                 Opcode::CallIndirect(_) => {
                     return Err(ExecuteError::NotImplemented);
                 },
                 Opcode::Return => {
                     // Pop the current frame.
-                    frames.pop().unwrap();
+                    let mut prev_frame = frames.pop().unwrap();
 
                     // Restore IP.
                     let frame: &mut Frame = match frames.last_mut() {
@@ -243,6 +271,26 @@ impl Module {
                         None => return Ok(()) // We've reached the end of the entry function
                     };
                     ip = frame.ip.take().unwrap();
+
+                    let ty = if current_func.typeidx < self.types.len() {
+                        &self.types[current_func.typeidx]
+                    } else {
+                        return Err(ExecuteError::TypeIdxIndexOufOfBound);
+                    };
+
+                    let n_rets = match *ty {
+                        Type::Func(_ , ref rets) => rets.len(),
+                        _ => return Err(ExecuteError::TypeMismatch)
+                    };
+
+                    // There should be exactly n_rets operands now.
+                    if prev_frame.operands.len() != n_rets {
+                        return Err(ExecuteError::TypeMismatch);
+                    }
+
+                    for op in &prev_frame.operands {
+                        frame.push_operand(*op);
+                    }
 
                     current_func = &self.functions[frame.func_id];
                 },
@@ -614,7 +662,7 @@ impl Module {
                     let v = frame.pop_operand()?;
                     frame.push_operand(int_ops::i64_extend_i32_s(v.get_i64()?));
                 },
-                //_ => return Err(ExecuteError::NotImplemented)
+                _ => return Err(ExecuteError::NotImplemented)
             }
         }
 

@@ -16,6 +16,7 @@ impl Default for Value {
 impl Value {
     pub fn get_i32(&self) -> ExecuteResult<i32> {
         match *self {
+            Value::Undef => Ok(0),
             Value::I32(v) => Ok(v),
             _ => Err(ExecuteError::TypeMismatch)
         }
@@ -23,6 +24,7 @@ impl Value {
 
     pub fn get_i64(&self) -> ExecuteResult<i64> {
         match *self {
+            Value::Undef => Ok(0),
             Value::I64(v) => Ok(v),
             _ => Err(ExecuteError::TypeMismatch)
         }
