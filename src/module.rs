@@ -3,8 +3,8 @@ use alloc::Vec;
 use opcode::Opcode;
 
 pub struct Module {
-    pub(crate) types: Vec<Type>,
-    pub(crate) functions: Vec<Function>
+    pub types: Vec<Type>,
+    pub functions: Vec<Function>
 }
 
 pub enum Type {
@@ -12,15 +12,16 @@ pub enum Type {
 }
 
 pub struct Function {
-    pub(crate) typeidx: usize,
-    pub(crate) locals: Vec<ValType>,
-    pub(crate) body: FunctionBody
+    pub typeidx: usize,
+    pub locals: Vec<ValType>,
+    pub body: FunctionBody
 }
 
 pub struct FunctionBody {
-    pub(crate) opcodes: Vec<Opcode>
+    pub opcodes: Vec<Opcode>
 }
 
+#[derive(Copy, Clone, Debug)]
 pub enum ValType {
     I32,
     I64,
