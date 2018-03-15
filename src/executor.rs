@@ -16,7 +16,7 @@ pub enum ExecuteError {
     FunctionIndexOutOfBound,
     OpcodeIndexOutOfBound,
     FrameIndexOutOfBound,
-    LocalIndexOutOfBound,
+    LocalIndexOutOfBound(usize),
     GlobalIndexOutOfBound,
     UnreachableExecuted,
     AddrOutOfBound,
@@ -170,7 +170,7 @@ impl Frame {
         let idx = idx as usize;
 
         if idx >= self.locals.len() {
-            Err(ExecuteError::LocalIndexOutOfBound)
+            Err(ExecuteError::LocalIndexOutOfBound(idx))
         } else {
             self.locals[idx] = val;
             Ok(())
@@ -181,7 +181,7 @@ impl Frame {
         let idx = idx as usize;
 
         if idx >= self.locals.len() {
-            Err(ExecuteError::LocalIndexOutOfBound)
+            Err(ExecuteError::LocalIndexOutOfBound(idx))
         } else {
             Ok(self.locals[idx])
         }
@@ -189,10 +189,20 @@ impl Frame {
 }
 
 impl Module {
-    pub fn execute(&self, rt_config: RuntimeConfig, initial_func: usize) -> ExecuteResult<()> {
+    pub fn execute(&self, rt_config: RuntimeConfig, initial_func: usize) -> ExecuteResult<Option<Value>> {
         let mut rt = RuntimeInfo::new(rt_config);
         let mut frames: Vec<Frame> = Vec::new();
         let mut ip: usize = 0;
+
+        for ds in &self.data_segments {
+            let offset = ds.offset as usize;
+            if offset >= rt.mem.data.len() || offset + ds.data.len() > rt.mem.data.len() {
+                return Err(ExecuteError::AddrOutOfBound);
+            }
+            for i in 0..ds.data.len() {
+                rt.mem.data[offset + i] = ds.data[i];
+            }
+        }
 
         let mut current_func: &Function = &self.functions[initial_func];
         frames.push(Frame::setup(initial_func, current_func));
@@ -274,13 +284,6 @@ impl Module {
                     // Pop the current frame.
                     let mut prev_frame = frames.pop().unwrap();
 
-                    // Restore IP.
-                    let frame: &mut Frame = match frames.last_mut() {
-                        Some(v) => v,
-                        None => return Ok(()) // We've reached the end of the entry function
-                    };
-                    ip = frame.ip.take().unwrap();
-
                     let ty = if current_func.typeidx < self.types.len() {
                         &self.types[current_func.typeidx]
                     } else {
@@ -296,6 +299,17 @@ impl Module {
                     if prev_frame.operands.len() != n_rets {
                         return Err(ExecuteError::TypeMismatch);
                     }
+
+                    // Restore IP.
+                    let frame: &mut Frame = match frames.last_mut() {
+                        Some(v) => v,
+                        None => return Ok(if n_rets == 0 {
+                            None
+                        } else {
+                            Some(prev_frame.operands[0])
+                        }) // We've reached the end of the entry function
+                    };
+                    ip = frame.ip.take().unwrap();
 
                     for op in &prev_frame.operands {
                         frame.push_operand(*op);
@@ -770,6 +784,6 @@ impl Module {
             }
         }
 
-        Ok(())
+        Err(ExecuteError::UnreachableExecuted)
     }
 }

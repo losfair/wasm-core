@@ -1,6 +1,6 @@
 use alloc::Vec;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Opcode {
     Drop,
     Select,
