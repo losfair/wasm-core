@@ -7,7 +7,31 @@ use std::io::Write;
 
 use translator::wasm_core::value::Value;
 use translator::wasm_core::module::Module;
-use translator::wasm_core::executor::{VirtualMachine, RuntimeConfig};
+use translator::wasm_core::executor::{VirtualMachine, RuntimeConfig, NativeResolver, NativeEntry, ExecuteError};
+
+struct DefaultResolver {
+
+}
+
+impl NativeResolver for DefaultResolver {
+    fn resolve(&self, module: &str, field: &str) -> Option<NativeEntry> {
+        println!("Resolve: {} {}", module, field);
+        if module != "env" {
+            return None;
+        }
+
+        match field {
+            "__wcore_ping" => Some(Box::new(|_, args| {
+                if args.len() == 0 {
+                    Err(ExecuteError::TypeMismatch)
+                } else {
+                    Ok(Some(args[0]))
+                }
+            })),
+            _ => None
+        }
+    }
+}
 
 fn main() {
     let mut args = env::args();
@@ -35,7 +59,8 @@ fn main() {
         let module = Module::std_deserialize(serialized.as_slice()).unwrap();
         let mut vm: VirtualMachine = VirtualMachine::new(&module, RuntimeConfig {
             mem_default_size_pages: 128,
-            mem_max_size_pages: Some(256)
+            mem_max_size_pages: Some(256),
+            resolver: Box::new(DefaultResolver {})
         }).unwrap();
 
         let entry = vm.lookup_exported_func(entry.as_str()).unwrap();

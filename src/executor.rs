@@ -1,5 +1,6 @@
 use module::{Module, Function, Type, Export, Table};
 use core::result::Result;
+use alloc::boxed::Box;
 use alloc::{Vec, String};
 use opcode::Opcode;
 use int_ops;
@@ -38,7 +39,24 @@ pub type ExecuteResult<T> = Result<T, ExecuteError>;
 pub struct VirtualMachine<'a> {
     module: &'a Module,
     rt: RuntimeInfo,
-    frames: Vec<Frame>
+    frames: Vec<Frame>,
+    native_functions: Vec<NativeFunctionInfo>
+}
+
+pub struct NativeFunctionInfo {
+    f: NativeFunction,
+    typeidx: usize
+}
+
+pub type NativeEntry = Box<Fn(&mut RuntimeInfo, &[Value]) -> ExecuteResult<Option<Value>> + 'static>;
+
+pub enum NativeFunction {
+    Uninitialized(String, String), // (module, field)
+    Ready(NativeEntry)
+}
+
+pub trait NativeResolver: 'static {
+    fn resolve(&self, module: &str, field: &str) -> Option<NativeEntry>;
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -49,13 +67,35 @@ pub enum Mutable {
 
 pub struct RuntimeInfo {
     mem: Memory,
-    globals: Vec<Value>
+    globals: Vec<Value>,
+    resolver: Box<NativeResolver>
 }
 
-#[derive(Clone)]
 pub struct RuntimeConfig {
     pub mem_default_size_pages: usize,
-    pub mem_max_size_pages: Option<usize>
+    pub mem_max_size_pages: Option<usize>,
+    pub resolver: Box<NativeResolver>
+}
+
+impl NativeFunction {
+    pub fn invoke(&mut self, rt: &mut RuntimeInfo, args: &[Value]) -> ExecuteResult<Option<Value>> {
+        match *self {
+            NativeFunction::Uninitialized(ref m, ref f) => {
+                let target = match rt.resolver.resolve(m.as_str(), f.as_str()) {
+                    Some(v) => v,
+                    None => return Err(ExecuteError::FunctionNotFound)
+                };
+                *self = NativeFunction::Ready(target);
+            },
+            _ => {}
+        }
+
+        if let NativeFunction::Ready(ref f) = *self {
+            f(rt, args)
+        } else {
+            Err(ExecuteError::UnreachableExecuted)
+        }
+    }
 }
 
 impl RuntimeInfo {
@@ -65,7 +105,8 @@ impl RuntimeInfo {
                 config.mem_default_size_pages * PAGE_SIZE,
                 config.mem_max_size_pages.map(|v| v * PAGE_SIZE)
             ),
-            globals: Vec::new()
+            globals: Vec::new(),
+            resolver: config.resolver
         }
     }
 }
@@ -203,7 +244,8 @@ impl<'a> VirtualMachine<'a> {
         let mut vm = VirtualMachine {
             module: module,
             rt: RuntimeInfo::new(rt_config),
-            frames: Vec::new()
+            frames: Vec::new(),
+            native_functions: Vec::new()
         };
 
         for ds in &module.data_segments {
@@ -218,6 +260,16 @@ impl<'a> VirtualMachine<'a> {
 
         for g in &module.globals {
             vm.rt.globals.push(g.value);
+        }
+
+        for n in &module.natives {
+            vm.native_functions.push(NativeFunctionInfo {
+                f: NativeFunction::Uninitialized(
+                    n.module.clone(),
+                    n.field.clone()
+                ),
+                typeidx: n.typeidx
+            });
         }
 
         Ok(vm)
@@ -407,6 +459,36 @@ impl<'a> VirtualMachine<'a> {
 
                     // Push the newly-created frame.
                     self.frames.push(new_frame);
+                },
+                Opcode::NativeInvoke(id) => {
+                    let id = id as usize;
+
+                    if id >= self.native_functions.len() {
+                        return Err(ExecuteError::FunctionIndexOutOfBound);
+                    }
+                    let f: &mut NativeFunctionInfo = &mut self.native_functions[id];
+
+                    if f.typeidx >= self.module.types.len() {
+                        return Err(ExecuteError::TypeIdxIndexOufOfBound);
+                    }
+
+                    let Type::Func(ref args, ref expected_ret) = self.module.types[f.typeidx];
+                    if args.len() > frame.operands.len() {
+                        return Err(ExecuteError::OperandStackUnderflow);
+                    }
+                    let ret = f.f.invoke(&mut self.rt, &frame.operands[frame.operands.len() - args.len()..frame.operands.len()])?;
+
+                    if (expected_ret.len() != 0 && ret.is_none()) || (expected_ret.len() == 0 && ret.is_some()) {
+                        return Err(ExecuteError::TypeMismatch);
+                    }
+
+                    for _ in 0..args.len() {
+                        frame.pop_operand()?;
+                    }
+
+                    if let Some(v) = ret {
+                        frame.push_operand(v);
+                    }
                 },
                 Opcode::Return => {
                     // Pop the current frame.

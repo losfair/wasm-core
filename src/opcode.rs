@@ -129,6 +129,8 @@ pub enum Opcode {
     JmpIf(u32),
     JmpTable(Vec<u32>, u32),
 
+    NativeInvoke(u32),
+
     NotImplemented(String)
 }
 

@@ -14,7 +14,15 @@ pub struct Module {
     pub data_segments: Vec<DataSegment>,
     pub exports: BTreeMap<String, Export>,
     pub tables: Vec<Table>,
-    pub globals: Vec<Global>
+    pub globals: Vec<Global>,
+    pub natives: Vec<Native>
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Native {
+    pub module: String,
+    pub field: String,
+    pub typeidx: usize
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

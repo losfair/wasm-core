@@ -6,6 +6,7 @@ use std::collections::BTreeMap;
 use parity_wasm::elements;
 use wasm_core::opcode::Memarg;
 use wasm_core::executor::RuntimeConfig;
+use wasm_core::resolver::NullResolver;
 
 pub fn translate_value_type(v: &elements::ValueType) -> wasm_core::module::ValType {
     match *v {
@@ -117,11 +118,13 @@ pub fn eval_init_expr(expr: &elements::InitExpr) -> wasm_core::value::Value {
         data_segments: vec! [],
         exports: BTreeMap::new(),
         tables: Vec::new(),
-        globals: Vec::new()
+        globals: Vec::new(),
+        natives: Vec::new()
     };
     let val = module.execute(RuntimeConfig {
         mem_default_size_pages: 1,
-        mem_max_size_pages: Some(1)
+        mem_max_size_pages: Some(1),
+        resolver: Box::new(NullResolver::new())
     }, 0).unwrap().unwrap();
     val
 }
@@ -343,6 +346,50 @@ pub fn translate_module(code: &[u8]) -> Vec<u8> {
         Vec::new()
     };
 
+    let mut functions: Vec<wasm_core::module::Function> = Vec::new();
+    let mut natives: Vec<wasm_core::module::Native> = Vec::new();
+
+    module.import_section().and_then(|isec| {
+        for entry in isec.entries() {
+            let typeidx = if let elements::External::Function(id) = *entry.external() {
+                id
+            } else {
+                eprintln!("Warning: Import ignored: {:?}", entry);
+                continue;
+            } as usize;
+
+            use self::wasm_core::opcode::Opcode;
+            use self::wasm_core::module::Native;
+
+            let native_id = natives.len();
+            natives.push(Native {
+                module: entry.module().to_string(),
+                field: entry.field().to_string(),
+                typeidx: typeidx
+            });
+
+            let mut opcodes: Vec<Opcode> = vec! [];
+            let wasm_core::module::Type::Func(ref ty, _) = types[typeidx];
+
+            for i in 0..ty.len() {
+                opcodes.push(Opcode::GetLocal(i as u32));
+            }
+
+            opcodes.push(Opcode::NativeInvoke(native_id as u32));
+            opcodes.push(Opcode::Return);
+
+            functions.push(wasm_core::module::Function {
+                name: None,
+                typeidx: typeidx,
+                locals: Vec::new(),
+                body: wasm_core::module::FunctionBody {
+                    opcodes: opcodes
+                }
+            });
+        }
+        Some(())
+    });
+
     let code_section: &elements::CodeSection = module.code_section().unwrap();
     let function_section: &elements::FunctionSection = module.function_section().unwrap();
 
@@ -351,7 +398,8 @@ pub fn translate_module(code: &[u8]) -> Vec<u8> {
 
     assert_eq!(bodies.len(), fdefs.len());
 
-    let mut functions: Vec<wasm_core::module::Function> = (0..bodies.len()).map(|i| {
+    functions.extend((0..bodies.len()).map(|i| {
+        //eprintln!("Function {}: {:?} {:?}", i, fdefs[i], bodies[i]);
         let typeidx = fdefs[i].type_ref() as usize;
         let mut locals: Vec<wasm_core::module::ValType> = Vec::new();
         for lc in bodies[i].locals() {
@@ -371,7 +419,7 @@ pub fn translate_module(code: &[u8]) -> Vec<u8> {
                 opcodes: opcodes
             }
         }
-    }).collect();
+    }));
 
     for sec in module.sections() {
         let ns = if let elements::Section::Name(ref ns) = *sec {
@@ -494,7 +542,8 @@ pub fn translate_module(code: &[u8]) -> Vec<u8> {
         data_segments: data_segs,
         exports: export_map,
         tables: tables,
-        globals: globals
+        globals: globals,
+        natives: natives
     };
     let serialized = target_module.std_serialize().unwrap();
 
