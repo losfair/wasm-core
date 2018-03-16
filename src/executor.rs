@@ -1,4 +1,4 @@
-use module::{Module, Function, Type, Export};
+use module::{Module, Function, Type, Export, Table};
 use core::result::Result;
 use alloc::{Vec, String};
 use opcode::Opcode;
@@ -12,6 +12,7 @@ pub enum ExecuteError {
     Custom(String),
     OperandStackUnderflow,
     NotImplemented,
+    TableIndexOutOfBound,
     TypeIdxIndexOufOfBound,
     FunctionIndexOutOfBound,
     OpcodeIndexOutOfBound,
@@ -21,6 +22,7 @@ pub enum ExecuteError {
     UnreachableExecuted,
     AddrOutOfBound(u32, u32),
     TypeMismatch,
+    UndefinedTableEntry,
     FunctionNotFound
 }
 
@@ -129,6 +131,16 @@ pub enum StoreValue {
     Global(Value, Mutable)
 }
 
+#[derive(Clone, Debug)]
+pub struct Backtrace {
+    pub frames: Vec<BtFrame>
+}
+
+#[derive(Clone, Debug)]
+pub struct BtFrame {
+    pub name: Option<String>
+}
+
 pub struct Frame {
     func_id: usize,
     ip: Option<usize>,
@@ -225,6 +237,60 @@ impl<'a> VirtualMachine<'a> {
         }
     }
 
+    pub fn backtrace(&self) -> Backtrace {
+        let mut bt_frames: Vec<BtFrame> = Vec::new();
+        for f in self.frames.iter().rev() {
+            let func_id = f.func_id;
+            let func = &self.module.functions[func_id];
+            bt_frames.push(BtFrame {
+                name: func.name.clone()
+            });
+        }
+
+        Backtrace {
+            frames: bt_frames
+        }
+    }
+
+    fn prep_invoke(
+        module: &Module,
+        frame: &mut Frame,
+        idx: usize
+    ) -> ExecuteResult<Frame> {
+        if idx >= module.functions.len() {
+            return Err(ExecuteError::FunctionIndexOutOfBound);
+        }
+        let current_func = &module.functions[idx];
+
+        // Now we've switched the current function to the new one.
+        // Initialize the new frame now.
+
+        let mut new_frame = Frame::setup_no_locals(idx);
+
+        let ty = if current_func.typeidx < module.types.len() {
+            &module.types[current_func.typeidx]
+        } else {
+            return Err(ExecuteError::TypeIdxIndexOufOfBound);
+        };
+
+        let n_args = match *ty {
+            Type::Func(ref args, _) => args.len(),
+            _ => return Err(ExecuteError::TypeMismatch)
+        };
+
+        let n_locals = current_func.locals.len();
+
+        // Initialize the new locals.
+        new_frame.locals = vec![Value::default(); n_args + n_locals];
+
+        for i in 0..n_args {
+            let arg_v = frame.pop_operand()?;
+            new_frame.locals[n_args - 1 - i] = arg_v;
+        }
+
+        Ok(new_frame)
+    }
+
     pub fn execute(
         &mut self,
         initial_func: usize,
@@ -287,44 +353,57 @@ impl<'a> VirtualMachine<'a> {
                     // Reset IP.
                     ip = 0;
 
-                    let idx = idx as usize;
-                    if idx >= self.module.functions.len() {
-                        return Err(ExecuteError::FunctionIndexOutOfBound);
-                    }
-                    current_func = &self.module.functions[idx];
-
-                    // Now we've switched the current function to the new one.
-                    // Initialize the new frame now.
-
-                    let mut new_frame = Frame::setup_no_locals(idx);
-
-                    let ty = if current_func.typeidx < self.module.types.len() {
-                        &self.module.types[current_func.typeidx]
-                    } else {
-                        return Err(ExecuteError::TypeIdxIndexOufOfBound);
-                    };
-
-                    let n_args = match *ty {
-                        Type::Func(ref args, _) => args.len(),
-                        _ => return Err(ExecuteError::TypeMismatch)
-                    };
-
-                    let n_locals = current_func.locals.len();
-
-                    // Initialize the new locals.
-                    new_frame.locals = vec![Value::default(); n_args + n_locals];
-
-                    for i in 0..n_args {
-                        let arg_v = frame.pop_operand()?;
-                        new_frame.locals[n_args - 1 - i] = arg_v;
-                    }
+                    let new_frame = Self::prep_invoke(&self.module, frame, idx as usize)?;
+                    current_func = &self.module.functions[new_frame.func_id];
 
                     // Push the newly-created frame.
                     self.frames.push(new_frame);
                     
                 },
-                Opcode::CallIndirect(_) => {
-                    return Err(ExecuteError::NotImplemented);
+                Opcode::CallIndirect(typeidx) => {
+                    let typeidx = typeidx as usize;
+                    if self.module.tables.len() == 0 {
+                        return Err(ExecuteError::TableIndexOutOfBound);
+                    }
+                    let table: &Table = &self.module.tables[0];
+
+                    if typeidx >= self.module.types.len() {
+                        return Err(ExecuteError::TypeIdxIndexOufOfBound);
+                    }
+                    let ft_expect = &self.module.types[typeidx];
+
+                    let index = frame.pop_operand()?.get_i32()? as usize;
+                    if index >= table.elements.len() {
+                        return Err(ExecuteError::TableIndexOutOfBound);
+                    }
+
+                    let elem: u32 = if let Some(v) = table.elements[index] {
+                        v
+                    } else {
+                        return Err(ExecuteError::UndefinedTableEntry);
+                    };
+
+                    if elem as usize >= self.module.functions.len() {
+                        return Err(ExecuteError::FunctionIndexOutOfBound);
+                    }
+
+                    let actual_typeidx = self.module.functions[elem as usize].typeidx;
+                    if actual_typeidx >= self.module.types.len() {
+                        return Err(ExecuteError::TypeIdxIndexOufOfBound);
+                    }
+                    if self.module.types[actual_typeidx] != *ft_expect {
+                        //panic!("Expected {:?}, got {:?}", self.module.types[actual_typeidx], ft_expect);
+                        return Err(ExecuteError::TypeMismatch);
+                    }
+
+                    frame.ip = Some(ip);
+                    ip = 0;
+
+                    let new_frame = Self::prep_invoke(&self.module, frame, elem as usize)?;
+                    current_func = &self.module.functions[new_frame.func_id];
+
+                    // Push the newly-created frame.
+                    self.frames.push(new_frame);
                 },
                 Opcode::Return => {
                     // Pop the current frame.
@@ -419,7 +498,9 @@ impl<'a> VirtualMachine<'a> {
                     let v = self.rt.store.values[addr];
                     match v {
                         StoreValue::Global(v, _) => frame.push_operand(v),
-                        _ => return Err(ExecuteError::TypeMismatch)
+                        _ => {
+                            return Err(ExecuteError::TypeMismatch)
+                        }
                     }
                 },
                 Opcode::SetGlobal(idx) => {

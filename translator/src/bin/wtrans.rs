@@ -41,7 +41,17 @@ fn main() {
         let entry = vm.lookup_exported_func(entry.as_str()).unwrap();
         eprintln!("{:?}", module.functions[entry]);
 
-        let result = vm.execute(entry, &call_args).unwrap();
+        let result = vm.execute(entry, &call_args);
+        let result = match result {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("Error: {:?}", e);
+                eprintln!("Backtrace:");
+                let bt = vm.backtrace();
+                eprintln!("{:?}", bt);
+                None
+            }
+        };
         println!("{:?}", result);
     } else {
         eprintln!("Unrecognized mode: {}", mode);

@@ -106,6 +106,7 @@ pub fn eval_init_expr(expr: &elements::InitExpr) -> i32 {
         ],
         functions: vec! [
             wasm_core::module::Function {
+                name: None,
                 typeidx: 0,
                 locals: Vec::new(),
                 body: wasm_core::module::FunctionBody {
@@ -114,7 +115,8 @@ pub fn eval_init_expr(expr: &elements::InitExpr) -> i32 {
             }
         ],
         data_segments: vec! [],
-        exports: BTreeMap::new()
+        exports: BTreeMap::new(),
+        tables: Vec::new()
     };
     let val = module.execute(RuntimeConfig {
         mem_default_size_pages: 1,
@@ -315,7 +317,14 @@ pub fn translate_opcodes(ops: &[elements::Opcode]) -> Vec<wasm_core::opcode::Opc
 }
 
 pub fn translate_module(code: &[u8]) -> Vec<u8> {
-    let module: elements::Module = parity_wasm::deserialize_buffer(code).unwrap();
+    let mut module: elements::Module = parity_wasm::deserialize_buffer(code).unwrap();
+    module = match module.parse_names() {
+        Ok(v) => v,
+        Err((_, m)) => {
+            eprintln!("Warning: Failed to parse names");
+            m
+        }
+    };
 
     let types: Vec<wasm_core::module::Type> = if let Some(s) = module.type_section() {
         s.types().iter().map(|t| {
@@ -341,7 +350,7 @@ pub fn translate_module(code: &[u8]) -> Vec<u8> {
 
     assert_eq!(bodies.len(), fdefs.len());
 
-    let functions: Vec<wasm_core::module::Function> = (0..bodies.len()).map(|i| {
+    let mut functions: Vec<wasm_core::module::Function> = (0..bodies.len()).map(|i| {
         let typeidx = fdefs[i].type_ref() as usize;
         let mut locals: Vec<wasm_core::module::ValType> = Vec::new();
         for lc in bodies[i].locals() {
@@ -354,6 +363,7 @@ pub fn translate_module(code: &[u8]) -> Vec<u8> {
         opcodes.push(wasm_core::opcode::Opcode::Return);
 
         wasm_core::module::Function {
+            name: None,
             typeidx: typeidx,
             locals: locals,
             body: wasm_core::module::FunctionBody {
@@ -362,11 +372,26 @@ pub fn translate_module(code: &[u8]) -> Vec<u8> {
         }
     }).collect();
 
+    for sec in module.sections() {
+        let ns = if let elements::Section::Name(ref ns) = *sec {
+            ns
+        } else {
+            continue;
+        };
+        if let elements::NameSection::Function(ref fns) = *ns {
+            eprintln!("Found function name section");
+            for (i, name) in fns.names() {
+                functions[i as usize].name = Some(name.to_string());
+            }
+            break;
+        }
+    }
+
     let mut data_segs: Vec<wasm_core::module::DataSegment> = Vec::new();
     if let Some(ds) = module.data_section() {
         for seg in ds.entries() {
             let offset = eval_init_expr(seg.offset()) as u32;
-            eprintln!("Offset resolved: {} {:?}", offset, seg.value());
+            //eprintln!("Offset resolved: {} {:?}", offset, seg.value());
             data_segs.push(wasm_core::module::DataSegment {
                 offset: offset,
                 data: seg.value().to_vec()
@@ -401,11 +426,65 @@ pub fn translate_module(code: &[u8]) -> Vec<u8> {
         eprintln!("Warning: Export section not found");
     }
 
+    let mut tables: Vec<wasm_core::module::Table> =
+        module.table_section().and_then(|ts| {
+            Some(ts.entries().iter().map(|entry| {
+                let limits: &elements::ResizableLimits = entry.limits();
+                let (min, max) = (limits.initial(), limits.maximum());
+
+                // Hard limit.
+                if min > 1048576 {
+                    panic!("Hard limit for table size (min) exceeded");
+                }
+
+                let elements: Vec<Option<u32>> = vec! [ None; min as usize ];
+                wasm_core::module::Table {
+                    min: min,
+                    max: max,
+                    elements: elements
+                }
+            }).collect())
+        }).or_else(|| Some(Vec::new())).unwrap();
+
+    if let Some(elems) = module.elements_section() {
+        for entry in elems.entries() {
+            let offset = eval_init_expr(entry.offset()) as u32 as usize;
+            let members = entry.members();
+            let end = offset + members.len();
+            let tt = &mut tables[entry.index() as usize];
+
+            if end > tt.elements.len() {
+                if let Some(max) = tt.max {
+                    if end > max as usize {
+                        panic!("Max table length exceeded");
+                    }
+                }
+                // Hard limit.
+                if end > 1048576 {
+                    panic!("Hard limit for table size (max) exceeded");
+                }
+                while end > tt.elements.len() {
+                    tt.elements.push(None);
+                }
+            }
+
+            for i in 0..members.len() {
+                tt.elements[offset + i] = Some(members[i]);
+            }
+
+            eprintln!("Elements written to table: {}, {}", offset, members.len());
+        }
+        eprintln!("{} elements added to table", elems.entries().len());
+    } else {
+        eprintln!("Warning: Elements section not found");
+    }
+
     let target_module = wasm_core::module::Module {
         types: types,
         functions: functions,
         data_segments: data_segs,
-        exports: export_map
+        exports: export_map,
+        tables: tables
     };
     let serialized = target_module.std_serialize().unwrap();
 

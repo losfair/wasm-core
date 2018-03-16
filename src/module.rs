@@ -10,7 +10,15 @@ pub struct Module {
     pub types: Vec<Type>,
     pub functions: Vec<Function>,
     pub data_segments: Vec<DataSegment>,
-    pub exports: BTreeMap<String, Export>
+    pub exports: BTreeMap<String, Export>,
+    pub tables: Vec<Table>
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Table {
+    pub min: u32,
+    pub max: Option<u32>,
+    pub elements: Vec<Option<u32>>
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -18,13 +26,14 @@ pub enum Export {
     Function(usize)
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
 pub enum Type {
     Func(Vec<ValType>, Vec<ValType>) // (args...) -> (ret)
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Function {
+    pub name: Option<String>,
     pub typeidx: usize,
     pub locals: Vec<ValType>,
     pub body: FunctionBody
@@ -41,7 +50,7 @@ pub struct DataSegment {
     pub data: Vec<u8>
 }
 
-#[derive(Copy, Clone, Debug, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
 pub enum ValType {
     I32,
     I64,
