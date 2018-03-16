@@ -19,7 +19,7 @@ pub enum ExecuteError {
     LocalIndexOutOfBound(usize),
     GlobalIndexOutOfBound,
     UnreachableExecuted,
-    AddrOutOfBound,
+    AddrOutOfBound(u32, u32),
     TypeMismatch,
     FunctionNotFound
 }
@@ -206,7 +206,7 @@ impl<'a> VirtualMachine<'a> {
         for ds in &module.data_segments {
             let offset = ds.offset as usize;
             if offset >= vm.rt.mem.data.len() || offset + ds.data.len() > vm.rt.mem.data.len() {
-                return Err(ExecuteError::AddrOutOfBound);
+                return Err(ExecuteError::AddrOutOfBound(offset as u32, ds.data.len() as u32));
             }
             for i in 0..ds.data.len() {
                 vm.rt.mem.data[offset + i] = ds.data[i];
@@ -414,7 +414,7 @@ impl<'a> VirtualMachine<'a> {
                     }
                     let addr = self.rt.global_addrs[idx];
                     if addr >= self.rt.store.values.len() {
-                        return Err(ExecuteError::AddrOutOfBound);
+                        return Err(ExecuteError::GlobalIndexOutOfBound);
                     }
                     let v = self.rt.store.values[addr];
                     match v {
@@ -429,7 +429,7 @@ impl<'a> VirtualMachine<'a> {
                     }
                     let addr = self.rt.global_addrs[idx];
                     if addr >= self.rt.store.values.len() {
-                        return Err(ExecuteError::AddrOutOfBound);
+                        return Err(ExecuteError::GlobalIndexOutOfBound);
                     }
 
                     let v = frame.pop_operand()?;

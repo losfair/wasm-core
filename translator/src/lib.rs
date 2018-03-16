@@ -1,7 +1,6 @@
 pub extern crate wasm_core;
 extern crate parity_wasm;
 
-use std::io::Write;
 use std::collections::BTreeMap;
 
 use parity_wasm::elements;
@@ -18,19 +17,47 @@ pub fn translate_value_type(v: &elements::ValueType) -> wasm_core::module::ValTy
 }
 
 struct Continuation {
-    opcode_index: usize
+    opcode_index: usize,
+    brtable_index: Option<usize>
 }
 
 impl Continuation {
+    fn with_opcode_index(index: usize) -> Continuation {
+        Continuation {
+            opcode_index: index,
+            brtable_index: None
+        }
+    }
+
+    fn brtable(index: usize, brt_index: usize) -> Continuation {
+        Continuation {
+            opcode_index: index,
+            brtable_index: Some(brt_index)
+        }
+    }
+
     fn write(&self, target: usize, opcodes: &mut [wasm_core::opcode::Opcode]) {
         use self::wasm_core::opcode::Opcode;
 
         let op_index = self.opcode_index;
 
-        let new_op = match opcodes[op_index] {
+        let new_op = match ::std::mem::replace(
+            &mut opcodes[op_index],
+            Opcode::Unreachable
+        ) {
             Opcode::Jmp(_) => Opcode::Jmp(target as u32),
             Opcode::JmpIf(_) => Opcode::JmpIf(target as u32),
-            Opcode::JmpTable(_, _) => panic!("JmpTable is not implemented yet"),
+            Opcode::JmpTable(mut table, otherwise) => {
+                let table_index = self.brtable_index.unwrap();
+                if table_index < table.len() {
+                    table[table_index] = target as u32;
+                    Opcode::JmpTable(table, otherwise)
+                } else if table_index == table.len() {
+                    Opcode::JmpTable(table, target as u32)
+                } else {
+                    panic!("Table index out of bound");
+                }
+            },
             _ => panic!("Expecting Jmp*")
         };
         opcodes[op_index] = new_op;
@@ -166,14 +193,14 @@ pub fn translate_opcodes(ops: &[elements::Opcode]) -> Vec<wasm_core::opcode::Opc
 
             PwOp::I32WrapI64 => result.push(WcOp::I32WrapI64),
 
-            PwOp::I32Load(offset, align) => result.push(WcOp::I32Load(Memarg { offset: offset, align: align })),
-            PwOp::I32Store(offset, align) => result.push(WcOp::I32Store(Memarg { offset: offset, align: align })),
-            PwOp::I32Load8U(offset, align) => result.push(WcOp::I32Load8U(Memarg { offset: offset, align: align })),
-            PwOp::I32Load8S(offset, align) => result.push(WcOp::I32Load8S(Memarg { offset: offset, align: align })),
-            PwOp::I32Load16U(offset, align) => result.push(WcOp::I32Load16U(Memarg { offset: offset, align: align })),
-            PwOp::I32Load16S(offset, align) => result.push(WcOp::I32Load16S(Memarg { offset: offset, align: align })),
-            PwOp::I32Store8(offset, align) => result.push(WcOp::I32Store8(Memarg { offset: offset, align: align })),
-            PwOp::I32Store16(offset, align) => result.push(WcOp::I32Store16(Memarg { offset: offset, align: align })),
+            PwOp::I32Load(align, offset) => result.push(WcOp::I32Load(Memarg { offset: offset, align: align })),
+            PwOp::I32Store(align, offset) => result.push(WcOp::I32Store(Memarg { offset: offset, align: align })),
+            PwOp::I32Load8U(align, offset) => result.push(WcOp::I32Load8U(Memarg { offset: offset, align: align })),
+            PwOp::I32Load8S(align, offset) => result.push(WcOp::I32Load8S(Memarg { offset: offset, align: align })),
+            PwOp::I32Load16U(align, offset) => result.push(WcOp::I32Load16U(Memarg { offset: offset, align: align })),
+            PwOp::I32Load16S(align, offset) => result.push(WcOp::I32Load16S(Memarg { offset: offset, align: align })),
+            PwOp::I32Store8(align, offset) => result.push(WcOp::I32Store8(Memarg { offset: offset, align: align })),
+            PwOp::I32Store16(align, offset) => result.push(WcOp::I32Store16(Memarg { offset: offset, align: align })),
 
             PwOp::I64Const(v) => result.push(WcOp::I64Const(v)),
             
@@ -213,17 +240,17 @@ pub fn translate_opcodes(ops: &[elements::Opcode]) -> Vec<wasm_core::opcode::Opc
             PwOp::I64ExtendUI32 => result.push(WcOp::I64ExtendI32U),
             PwOp::I64ExtendSI32 => result.push(WcOp::I64ExtendI32S),
 
-            PwOp::I64Load(offset, align) => result.push(WcOp::I64Load(Memarg { offset: offset, align: align })),
-            PwOp::I64Store(offset, align) => result.push(WcOp::I64Store(Memarg { offset: offset, align: align })),
-            PwOp::I64Load8U(offset, align) => result.push(WcOp::I64Load8U(Memarg { offset: offset, align: align })),
-            PwOp::I64Load8S(offset, align) => result.push(WcOp::I64Load8S(Memarg { offset: offset, align: align })),
-            PwOp::I64Load16U(offset, align) => result.push(WcOp::I64Load16U(Memarg { offset: offset, align: align })),
-            PwOp::I64Load16S(offset, align) => result.push(WcOp::I64Load16S(Memarg { offset: offset, align: align })),
-            PwOp::I64Load32U(offset, align) => result.push(WcOp::I64Load32U(Memarg { offset: offset, align: align })),
-            PwOp::I64Load32S(offset, align) => result.push(WcOp::I64Load32S(Memarg { offset: offset, align: align })),
-            PwOp::I64Store8(offset, align) => result.push(WcOp::I64Store8(Memarg { offset: offset, align: align })),
-            PwOp::I64Store16(offset, align) => result.push(WcOp::I64Store16(Memarg { offset: offset, align: align })),
-            PwOp::I64Store32(offset, align) => result.push(WcOp::I64Store32(Memarg { offset: offset, align: align })),
+            PwOp::I64Load(align, offset) => result.push(WcOp::I64Load(Memarg { offset: offset, align: align })),
+            PwOp::I64Store(align, offset) => result.push(WcOp::I64Store(Memarg { offset: offset, align: align })),
+            PwOp::I64Load8U(align, offset) => result.push(WcOp::I64Load8U(Memarg { offset: offset, align: align })),
+            PwOp::I64Load8S(align, offset) => result.push(WcOp::I64Load8S(Memarg { offset: offset, align: align })),
+            PwOp::I64Load16U(align, offset) => result.push(WcOp::I64Load16U(Memarg { offset: offset, align: align })),
+            PwOp::I64Load16S(align, offset) => result.push(WcOp::I64Load16S(Memarg { offset: offset, align: align })),
+            PwOp::I64Load32U(align, offset) => result.push(WcOp::I64Load32U(Memarg { offset: offset, align: align })),
+            PwOp::I64Load32S(align, offset) => result.push(WcOp::I64Load32S(Memarg { offset: offset, align: align })),
+            PwOp::I64Store8(align, offset) => result.push(WcOp::I64Store8(Memarg { offset: offset, align: align })),
+            PwOp::I64Store16(align, offset) => result.push(WcOp::I64Store16(Memarg { offset: offset, align: align })),
+            PwOp::I64Store32(align, offset) => result.push(WcOp::I64Store32(Memarg { offset: offset, align: align })),
 
             PwOp::End => {
                 if let Some(label) = labels.pop() {
@@ -256,13 +283,26 @@ pub fn translate_opcodes(ops: &[elements::Opcode]) -> Vec<wasm_core::opcode::Opc
             },
             PwOp::Br(lb) => {
                 let target = labels.iter_mut().rev().nth(lb as usize).expect("Branch target out of bound");
-                target.continuations.push(Continuation { opcode_index: result.len() });
+                target.continuations.push(Continuation::with_opcode_index(result.len()));
                 result.push(WcOp::Jmp(0xffffffff));
             },
             PwOp::BrIf(lb) => {
                 let target = labels.iter_mut().rev().nth(lb as usize).expect("Branch target out of bound");
-                target.continuations.push(Continuation { opcode_index: result.len() });
+                target.continuations.push(Continuation::with_opcode_index(result.len()));
                 result.push(WcOp::JmpIf(0xffffffff));
+            },
+            PwOp::BrTable(ref targets, otherwise) => {
+                let mut jmp_targets: Vec<u32> = Vec::new();
+
+                for (i, target) in targets.iter().enumerate() {
+                    let label = labels.iter_mut().rev().nth(*target as usize).expect("Branch target out of bound");
+                    label.continuations.push(Continuation::brtable(result.len(), i as usize));
+                    jmp_targets.push(0xffffffff);
+                }
+
+                let label = labels.iter_mut().rev().nth(otherwise as usize).expect("Branch target out of bound");
+                label.continuations.push(Continuation::brtable(result.len(), targets.len()));
+                result.push(WcOp::JmpTable(jmp_targets, 0xffffffff));
             },
             _ => {
                 eprintln!("Warning: Generating trap for unimplemented opcode: {:?}", op);
@@ -274,7 +314,7 @@ pub fn translate_opcodes(ops: &[elements::Opcode]) -> Vec<wasm_core::opcode::Opc
     result
 }
 
-pub fn translate_module(code: &[u8]) {
+pub fn translate_module(code: &[u8]) -> Vec<u8> {
     let module: elements::Module = parity_wasm::deserialize_buffer(code).unwrap();
 
     let types: Vec<wasm_core::module::Type> = if let Some(s) = module.type_section() {
@@ -326,7 +366,7 @@ pub fn translate_module(code: &[u8]) {
     if let Some(ds) = module.data_section() {
         for seg in ds.entries() {
             let offset = eval_init_expr(seg.offset()) as u32;
-            eprintln!("Offset resolved: {}", offset);
+            eprintln!("Offset resolved: {} {:?}", offset, seg.value());
             data_segs.push(wasm_core::module::DataSegment {
                 offset: offset,
                 data: seg.value().to_vec()
@@ -369,5 +409,5 @@ pub fn translate_module(code: &[u8]) {
     };
     let serialized = target_module.std_serialize().unwrap();
 
-    ::std::io::stdout().write(serialized.as_slice()).unwrap();
+    serialized
 }

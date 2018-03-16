@@ -208,29 +208,33 @@ pub fn i32_wrap_i64(a: i32) -> Value {
 pub fn i32_load(index: u32, m: &Memarg, storage: &mut Memory, n: u32) -> ExecuteResult<Value> {
     let ea = index + m.offset;
     if (ea + n) as usize > storage.data.len() {
-        return Err(ExecuteError::AddrOutOfBound);
+        return Err(ExecuteError::AddrOutOfBound(ea, n));
     }
 
-    let mut result: i32 = 0;
+    let mut result: u32 = 0;
+
+    // Little endian
     for i in 0..n {
+        let r = n - 1 - i;
         result <<= 8;
-        result |= storage.data[(ea + i) as usize] as i32;
+        result |= storage.data[(ea + r) as usize] as u32;
     }
 
-    Ok(Value::I32(result))
+    Ok(Value::I32(result as i32))
 }
 
 #[inline]
 pub fn i32_store(index: u32, val: Value, m: &Memarg, storage: &mut Memory, n: u32) -> ExecuteResult<()> {
     let ea = index + m.offset;
     if (ea + n) as usize > storage.data.len() {
-        return Err(ExecuteError::AddrOutOfBound);
+        return Err(ExecuteError::AddrOutOfBound(ea, n));
     }
 
-    let mut uni = val.get_i32()?;
+    let mut uni = val.get_i32()? as u32;
+
+    // Little endian
     for i in 0..n {
-        let r = n - 1 - i;
-        storage.data[(ea + r) as usize] = (uni & 0xff) as u8;
+        storage.data[(ea + i) as usize] = (uni & 0xff) as u8;
         uni >>= 8;
     }
 
@@ -447,29 +451,33 @@ pub fn i64_extend_i32_s(v: i64) -> Value {
 pub fn i64_load(index: u32, m: &Memarg, storage: &mut Memory, n: u32) -> ExecuteResult<Value> {
     let ea = index + m.offset;
     if (ea + n) as usize > storage.data.len() {
-        return Err(ExecuteError::AddrOutOfBound);
+        return Err(ExecuteError::AddrOutOfBound(ea, n));
     }
 
-    let mut result: i64 = 0;
+    let mut result: u64 = 0;
+
+    // Little endian
     for i in 0..n {
+        let r = n - 1 - i;
         result <<= 8;
-        result |= storage.data[(ea + i) as usize] as i64;
+        result |= storage.data[(ea + r) as usize] as u64;
     }
 
-    Ok(Value::I64(result))
+    Ok(Value::I64(result as i64))
 }
 
 #[inline]
 pub fn i64_store(index: u32, val: Value, m: &Memarg, storage: &mut Memory, n: u32) -> ExecuteResult<()> {
     let ea = index + m.offset;
     if (ea + n) as usize > storage.data.len() {
-        return Err(ExecuteError::AddrOutOfBound);
+        return Err(ExecuteError::AddrOutOfBound(ea, n));
     }
 
-    let mut uni = val.get_i64()?;
+    let mut uni = val.get_i64()? as u64;
+
+    // Little endian
     for i in 0..n {
-        let r = n - 1 - i;
-        storage.data[(ea + r) as usize] = (uni & 0xff) as u8;
+        storage.data[(ea + i) as usize] = (uni & 0xff) as u8;
         uni >>= 8;
     }
 
