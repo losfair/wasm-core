@@ -34,8 +34,8 @@ fn main() {
 
         let module = Module::std_deserialize(serialized.as_slice()).unwrap();
         let mut vm: VirtualMachine = VirtualMachine::new(&module, RuntimeConfig {
-            mem_default_size_pages: 64,
-            mem_max_size_pages: Some(128)
+            mem_default_size_pages: 128,
+            mem_max_size_pages: Some(256)
         }).unwrap();
 
         let entry = vm.lookup_exported_func(entry.as_str()).unwrap();
@@ -49,6 +49,7 @@ fn main() {
                 eprintln!("Backtrace:");
                 let bt = vm.backtrace();
                 eprintln!("{:?}", bt);
+                eprintln!("{:?}", vm.last_function());
                 None
             }
         };

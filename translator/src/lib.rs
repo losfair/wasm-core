@@ -309,7 +309,7 @@ pub fn translate_opcodes(ops: &[elements::Opcode]) -> Vec<wasm_core::opcode::Opc
             },
             _ => {
                 eprintln!("Warning: Generating trap for unimplemented opcode: {:?}", op);
-                result.push(WcOp::Unreachable);
+                result.push(WcOp::NotImplemented(format!("{:?}", op)));
             }
         }
     }

@@ -18,7 +18,10 @@ impl Value {
         match *self {
             Value::Undef => Ok(0),
             Value::I32(v) => Ok(v),
-            _ => Err(ExecuteError::TypeMismatch)
+            _ => {
+                //panic!();
+                Err(ExecuteError::ValueTypeMismatch)
+            }
         }
     }
 
@@ -26,7 +29,10 @@ impl Value {
         match *self {
             Value::Undef => Ok(0),
             Value::I64(v) => Ok(v),
-            _ => Err(ExecuteError::TypeMismatch)
+            _ => {
+                //panic!();
+                Err(ExecuteError::ValueTypeMismatch)
+            }
         }
     }
 

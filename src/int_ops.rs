@@ -82,7 +82,7 @@ pub fn i32_shl(a: i32, b: i32) -> Value {
 
 #[inline]
 pub fn i32_shr_u(a: i32, b: i32) -> Value {
-    Value::I32(((a as u32) >> b) as i32)
+    Value::I32(((a as u32).wrapping_shr(b as u32)) as i32)
 }
 
 #[inline]
@@ -200,8 +200,8 @@ pub fn i32_ge_s(a: i32, b: i32) -> Value {
 }
 
 #[inline]
-pub fn i32_wrap_i64(a: i32) -> Value {
-    Value::I64(a as i64)
+pub fn i32_wrap_i64(a: i64) -> Value {
+    Value::I32(a as i32)
 }
 
 #[inline]
@@ -319,7 +319,7 @@ pub fn i64_shl(a: i64, b: i64) -> Value {
 
 #[inline]
 pub fn i64_shr_u(a: i64, b: i64) -> Value {
-    Value::I64(((a as u32) >> b) as i64)
+    Value::I64(((a as u64).wrapping_shr(b as u32)) as i64)
 }
 
 #[inline]
@@ -340,111 +340,111 @@ pub fn i64_rotr(a: i64, b: i64) -> Value {
 #[inline]
 pub fn i64_eqz(v: i64) -> Value {
     if v == 0 {
-        Value::I64(1)
+        Value::I32(1)
     } else {
-        Value::I64(0)
+        Value::I32(0)
     }
 }
 
 #[inline]
 pub fn i64_eq(a: i64, b: i64) -> Value {
     if a == b {
-        Value::I64(1)
+        Value::I32(1)
     } else {
-        Value::I64(0)
+        Value::I32(0)
     }
 }
 
 #[inline]
 pub fn i64_ne(a: i64, b: i64) -> Value {
     if a == b {
-        Value::I64(0)
+        Value::I32(0)
     } else {
-        Value::I64(1)
+        Value::I32(1)
     }
 }
 
 #[inline]
 pub fn i64_lt_u(a: i64, b: i64) -> Value {
     if (a as u32) < (b as u32) {
-        Value::I64(1)
+        Value::I32(1)
     } else {
-        Value::I64(0)
+        Value::I32(0)
     }
 }
 
 #[inline]
 pub fn i64_lt_s(a: i64, b: i64) -> Value {
     if a < b {
-        Value::I64(1)
+        Value::I32(1)
     } else {
-        Value::I64(0)
+        Value::I32(0)
     }
 }
 
 #[inline]
 pub fn i64_le_u(a: i64, b: i64) -> Value {
     if (a as u32) <= (b as u32) {
-        Value::I64(1)
+        Value::I32(1)
     } else {
-        Value::I64(0)
+        Value::I32(0)
     }
 }
 
 #[inline]
 pub fn i64_le_s(a: i64, b: i64) -> Value {
     if a <= b {
-        Value::I64(1)
+        Value::I32(1)
     } else {
-        Value::I64(0)
+        Value::I32(0)
     }
 }
 
 #[inline]
 pub fn i64_gt_u(a: i64, b: i64) -> Value {
     if (a as u32) > (b as u32) {
-        Value::I64(1)
+        Value::I32(1)
     } else {
-        Value::I64(0)
+        Value::I32(0)
     }
 }
 
 #[inline]
 pub fn i64_gt_s(a: i64, b: i64) -> Value {
     if a > b {
-        Value::I64(1)
+        Value::I32(1)
     } else {
-        Value::I64(0)
+        Value::I32(0)
     }
 }
 
 #[inline]
 pub fn i64_ge_u(a: i64, b: i64) -> Value {
     if (a as u32) >= (b as u32) {
-        Value::I64(1)
+        Value::I32(1)
     } else {
-        Value::I64(0)
+        Value::I32(0)
     }
 }
 
 #[inline]
 pub fn i64_ge_s(a: i64, b: i64) -> Value {
     if a >= b {
-        Value::I64(1)
+        Value::I32(1)
     } else {
-        Value::I64(0)
+        Value::I32(0)
     }
 }
 
 #[inline]
-pub fn i64_extend_i32_u(v: i64) -> Value {
+pub fn i64_extend_i32_u(v: i32) -> Value {
     // FIXME: Is this correct?
-    Value::I32((v as u32) as i32)
+    Value::I64((v as i64) & 0x00000000ffffffffi64)
 }
 
 #[inline]
-pub fn i64_extend_i32_s(v: i64) -> Value {
-    Value::I32(v as i32)
+pub fn i64_extend_i32_s(v: i32) -> Value {
+    Value::I64(v as i64)
 }
 
 #[inline]

@@ -22,6 +22,7 @@ pub enum ExecuteError {
     UnreachableExecuted,
     AddrOutOfBound(u32, u32),
     TypeMismatch,
+    ValueTypeMismatch,
     UndefinedTableEntry,
     FunctionNotFound
 }
@@ -112,9 +113,12 @@ impl Memory {
             }
         }
 
-        self.data.resize(after_inc, 0);
+        let prev_size = self.data.len() / PAGE_SIZE;
 
-        Value::I32((self.data.len() / PAGE_SIZE) as i32)
+        self.data.resize(after_inc, 0);
+        //panic!("After inc: {}", after_inc);
+
+        Value::I32(prev_size as i32)
     }
 }
 
@@ -226,6 +230,14 @@ impl<'a> VirtualMachine<'a> {
             },
             None => Err(ExecuteError::FunctionNotFound)
         }
+    }
+
+    pub fn last_function(&'a self) -> Option<&'a Function> {
+        let frame: &Frame = match self.frames.last() {
+            Some(v) => v,
+            None => return None
+        };
+        Some(&self.module.functions[frame.func_id])
     }
 
     pub fn backtrace(&self) -> Backtrace {
@@ -641,7 +653,7 @@ impl<'a> VirtualMachine<'a> {
                 },
                 Opcode::I32WrapI64 => {
                     let v = frame.pop_operand()?;
-                    frame.push_operand(int_ops::i32_wrap_i64(v.get_i32()?));
+                    frame.push_operand(int_ops::i32_wrap_i64(v.get_i64()?));
                 },
                 Opcode::I32Load(ref m) => {
                     let i = frame.pop_operand()?.get_i32()? as u32;
@@ -829,11 +841,11 @@ impl<'a> VirtualMachine<'a> {
                 },
                 Opcode::I64ExtendI32U => {
                     let v = frame.pop_operand()?;
-                    frame.push_operand(int_ops::i64_extend_i32_u(v.get_i64()?));
+                    frame.push_operand(int_ops::i64_extend_i32_u(v.get_i32()?));
                 },
                 Opcode::I64ExtendI32S => {
                     let v = frame.pop_operand()?;
-                    frame.push_operand(int_ops::i64_extend_i32_s(v.get_i64()?));
+                    frame.push_operand(int_ops::i64_extend_i32_s(v.get_i32()?));
                 },
                 Opcode::I64Load(ref m) => {
                     let i = frame.pop_operand()?.get_i32()? as u32;
@@ -889,6 +901,11 @@ impl<'a> VirtualMachine<'a> {
                     let c = frame.pop_operand()?;
                     let i = frame.pop_operand()?.get_i32()? as u32;
                     int_ops::i64_store(i, c, m, &mut self.rt.mem, 4)?;
+                },
+                Opcode::NotImplemented(ref s) => {
+                    return Err(ExecuteError::Custom(
+                        format!("Not implemented: {}", s)
+                    ))
                 },
                 //_ => return Err(ExecuteError::NotImplemented)
             }
