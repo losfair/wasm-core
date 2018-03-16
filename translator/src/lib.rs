@@ -2,6 +2,7 @@ pub extern crate wasm_core;
 extern crate parity_wasm;
 
 use std::io::Write;
+use std::collections::BTreeMap;
 
 use parity_wasm::elements;
 use wasm_core::opcode::Memarg;
@@ -85,7 +86,8 @@ pub fn eval_init_expr(expr: &elements::InitExpr) -> i32 {
                 }
             }
         ],
-        data_segments: vec! []
+        data_segments: vec! [],
+        exports: BTreeMap::new()
     };
     let val = module.execute(RuntimeConfig {
         mem_default_size_pages: 1,
@@ -308,7 +310,8 @@ pub fn translate_module(code: &[u8]) {
                 locals.push(t);
             }
         }
-        let opcodes = translate_opcodes(bodies[i].code().elements());
+        let mut opcodes = translate_opcodes(bodies[i].code().elements());
+        opcodes.push(wasm_core::opcode::Opcode::Return);
 
         wasm_core::module::Function {
             typeidx: typeidx,
@@ -333,16 +336,36 @@ pub fn translate_module(code: &[u8]) {
         eprintln!("Warning: Data section not found");
     }
 
+    let mut export_map: BTreeMap<String, wasm_core::module::Export> = BTreeMap::new();
     if let Some(exports) = module.export_section() {
         for entry in exports.entries() {
+            use self::elements::Internal;
             eprintln!("Export: {} -> {:?}", entry.field(), entry.internal());
+
+            let field: &str = entry.field();
+            let internal: &Internal = entry.internal();
+
+            match *internal {
+                Internal::Function(id) => {
+                    export_map.insert(
+                        field.to_string(),
+                        wasm_core::module::Export::Function(id as usize)
+                    );
+                },
+                _ => {
+                    eprintln!("Warning: Import type not supported ({:?})", internal);
+                }
+            }
         }
+    } else {
+        eprintln!("Warning: Export section not found");
     }
 
     let target_module = wasm_core::module::Module {
         types: types,
         functions: functions,
-        data_segments: data_segs
+        data_segments: data_segs,
+        exports: export_map
     };
     let serialized = target_module.std_serialize().unwrap();
 

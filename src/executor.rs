@@ -1,4 +1,4 @@
-use module::{Module, Function, Type};
+use module::{Module, Function, Type, Export};
 use core::result::Result;
 use alloc::{Vec, String};
 use opcode::Opcode;
@@ -20,7 +20,8 @@ pub enum ExecuteError {
     GlobalIndexOutOfBound,
     UnreachableExecuted,
     AddrOutOfBound,
-    TypeMismatch
+    TypeMismatch,
+    FunctionNotFound
 }
 
 impl ::core::fmt::Display for ExecuteError {
@@ -30,6 +31,12 @@ impl ::core::fmt::Display for ExecuteError {
 }
 
 pub type ExecuteResult<T> = Result<T, ExecuteError>;
+
+pub struct VirtualMachine<'a> {
+    module: &'a Module,
+    rt: RuntimeInfo,
+    frames: Vec<Frame>
+}
 
 #[derive(Copy, Clone, Debug)]
 pub enum Mutable {
@@ -188,27 +195,66 @@ impl Frame {
     }
 }
 
-impl Module {
-    pub fn execute(&self, rt_config: RuntimeConfig, initial_func: usize) -> ExecuteResult<Option<Value>> {
-        let mut rt = RuntimeInfo::new(rt_config);
-        let mut frames: Vec<Frame> = Vec::new();
-        let mut ip: usize = 0;
+impl<'a> VirtualMachine<'a> {
+    pub fn new(module: &'a Module, rt_config: RuntimeConfig) -> ExecuteResult<VirtualMachine<'a>> {
+        let mut vm = VirtualMachine {
+            module: module,
+            rt: RuntimeInfo::new(rt_config),
+            frames: Vec::new()
+        };
 
-        for ds in &self.data_segments {
+        for ds in &module.data_segments {
             let offset = ds.offset as usize;
-            if offset >= rt.mem.data.len() || offset + ds.data.len() > rt.mem.data.len() {
+            if offset >= vm.rt.mem.data.len() || offset + ds.data.len() > vm.rt.mem.data.len() {
                 return Err(ExecuteError::AddrOutOfBound);
             }
             for i in 0..ds.data.len() {
-                rt.mem.data[offset + i] = ds.data[i];
+                vm.rt.mem.data[offset + i] = ds.data[i];
             }
         }
 
-        let mut current_func: &Function = &self.functions[initial_func];
-        frames.push(Frame::setup(initial_func, current_func));
+        Ok(vm)
+    }
+
+    pub fn lookup_exported_func(&self, name: &str) -> ExecuteResult<usize> {
+        match self.module.exports.get(name) {
+            Some(v) => match *v {
+                Export::Function(id) => Ok(id)
+            },
+            None => Err(ExecuteError::FunctionNotFound)
+        }
+    }
+
+    pub fn execute(
+        &mut self,
+        initial_func: usize,
+        args: &[Value]
+    ) -> ExecuteResult<Option<Value>> {
+        let mut current_func: &Function = &self.module.functions[initial_func];
+        let initial_stack_depth: usize = self.frames.len();
+
+        // FIXME: Handle initial call gracefully
+        {
+            if current_func.typeidx >= self.module.types.len() {
+                return Err(ExecuteError::TypeIdxIndexOufOfBound);
+            }
+
+            let Type::Func(ref initial_func_args_type, _) = self.module.types[current_func.typeidx];
+            if args.len() != initial_func_args_type.len() {
+                return Err(ExecuteError::TypeMismatch);
+            }
+            let mut initial_frame = Frame::setup_no_locals(initial_func);
+            initial_frame.locals = vec! [ Value::default(); args.len() + current_func.locals.len() ];
+            for i in 0..args.len() {
+                initial_frame.locals[i] = args[i];
+            }
+            self.frames.push(initial_frame);
+        }
+
+        let mut ip: usize = 0;
 
         loop {
-            let frame: &mut Frame = match frames.last_mut() {
+            let frame: &mut Frame = match self.frames.last_mut() {
                 Some(v) => v,
                 None => return Err(ExecuteError::FrameIndexOutOfBound)
             };
@@ -242,18 +288,18 @@ impl Module {
                     ip = 0;
 
                     let idx = idx as usize;
-                    if idx >= self.functions.len() {
+                    if idx >= self.module.functions.len() {
                         return Err(ExecuteError::FunctionIndexOutOfBound);
                     }
-                    current_func = &self.functions[idx];
+                    current_func = &self.module.functions[idx];
 
                     // Now we've switched the current function to the new one.
                     // Initialize the new frame now.
 
                     let mut new_frame = Frame::setup_no_locals(idx);
 
-                    let ty = if current_func.typeidx < self.types.len() {
-                        &self.types[current_func.typeidx]
+                    let ty = if current_func.typeidx < self.module.types.len() {
+                        &self.module.types[current_func.typeidx]
                     } else {
                         return Err(ExecuteError::TypeIdxIndexOufOfBound);
                     };
@@ -274,7 +320,7 @@ impl Module {
                     }
 
                     // Push the newly-created frame.
-                    frames.push(new_frame);
+                    self.frames.push(new_frame);
                     
                 },
                 Opcode::CallIndirect(_) => {
@@ -282,10 +328,10 @@ impl Module {
                 },
                 Opcode::Return => {
                     // Pop the current frame.
-                    let mut prev_frame = frames.pop().unwrap();
+                    let mut prev_frame = self.frames.pop().unwrap();
 
-                    let ty = if current_func.typeidx < self.types.len() {
-                        &self.types[current_func.typeidx]
+                    let ty = if current_func.typeidx < self.module.types.len() {
+                        &self.module.types[current_func.typeidx]
                     } else {
                         return Err(ExecuteError::TypeIdxIndexOufOfBound);
                     };
@@ -300,29 +346,36 @@ impl Module {
                         return Err(ExecuteError::TypeMismatch);
                     }
 
-                    // Restore IP.
-                    let frame: &mut Frame = match frames.last_mut() {
-                        Some(v) => v,
-                        None => return Ok(if n_rets == 0 {
+                    if self.frames.len() < initial_stack_depth {
+                        return Err(ExecuteError::Custom("BUG: Invalid frames".into()));
+                    }
+
+                    if self.frames.len() == initial_stack_depth {
+                        return Ok(if n_rets == 0 {
                             None
                         } else {
                             Some(prev_frame.operands[0])
-                        }) // We've reached the end of the entry function
-                    };
+                        });
+                    }
+
+                    // self.frames.len() > initial_stack_depth >= 0 always hold here.
+
+                    // Restore IP.
+                    let frame: &mut Frame = self.frames.last_mut().unwrap();
                     ip = frame.ip.take().unwrap();
 
                     for op in &prev_frame.operands {
                         frame.push_operand(*op);
                     }
 
-                    current_func = &self.functions[frame.func_id];
+                    current_func = &self.module.functions[frame.func_id];
                 },
                 Opcode::CurrentMemory => {
-                    frame.push_operand(rt.mem.current_size());
+                    frame.push_operand(self.rt.mem.current_size());
                 },
                 Opcode::GrowMemory => {
                     let n_pages = frame.pop_operand()?.get_i32()?;
-                    frame.push_operand(rt.mem.grow(n_pages));
+                    frame.push_operand(self.rt.mem.grow(n_pages));
                 },
                 Opcode::Nop => {},
                 Opcode::Jmp(target) => {
@@ -356,14 +409,14 @@ impl Module {
                 },
                 Opcode::GetGlobal(idx) => {
                     let idx = idx as usize;
-                    if idx >= rt.global_addrs.len() {
+                    if idx >= self.rt.global_addrs.len() {
                         return Err(ExecuteError::GlobalIndexOutOfBound);
                     }
-                    let addr = rt.global_addrs[idx];
-                    if addr >= rt.store.values.len() {
+                    let addr = self.rt.global_addrs[idx];
+                    if addr >= self.rt.store.values.len() {
                         return Err(ExecuteError::AddrOutOfBound);
                     }
-                    let v = rt.store.values[addr];
+                    let v = self.rt.store.values[addr];
                     match v {
                         StoreValue::Global(v, _) => frame.push_operand(v),
                         _ => return Err(ExecuteError::TypeMismatch)
@@ -371,16 +424,16 @@ impl Module {
                 },
                 Opcode::SetGlobal(idx) => {
                     let idx = idx as usize;
-                    if idx >= rt.global_addrs.len() {
+                    if idx >= self.rt.global_addrs.len() {
                         return Err(ExecuteError::GlobalIndexOutOfBound);
                     }
-                    let addr = rt.global_addrs[idx];
-                    if addr >= rt.store.values.len() {
+                    let addr = self.rt.global_addrs[idx];
+                    if addr >= self.rt.store.values.len() {
                         return Err(ExecuteError::AddrOutOfBound);
                     }
 
                     let v = frame.pop_operand()?;
-                    rt.store.values[addr] = StoreValue::Global(v, Mutable::Mut);
+                    self.rt.store.values[addr] = StoreValue::Global(v, Mutable::Mut);
                 },
                 Opcode::Unreachable => {
                     return Err(ExecuteError::UnreachableExecuted);
@@ -535,43 +588,43 @@ impl Module {
                 },
                 Opcode::I32Load(ref m) => {
                     let i = frame.pop_operand()?.get_i32()? as u32;
-                    let v = int_ops::i32_load(i, m, &mut rt.mem, 4)?;
+                    let v = int_ops::i32_load(i, m, &mut self.rt.mem, 4)?;
                     frame.push_operand(v);
                 },
                 Opcode::I32Load8U(ref m) => {
                     let i = frame.pop_operand()?.get_i32()? as u32;
-                    let v = int_ops::i32_load(i, m, &mut rt.mem, 1)?;
+                    let v = int_ops::i32_load(i, m, &mut self.rt.mem, 1)?;
                     frame.push_operand(v);
                 },
                 Opcode::I32Load8S(ref m) => {
                     let i = frame.pop_operand()?.get_i32()? as u32;
-                    let v = int_ops::i32_load(i, m, &mut rt.mem, 1)?;
+                    let v = int_ops::i32_load(i, m, &mut self.rt.mem, 1)?;
                     frame.push_operand(v);
                 },
                 Opcode::I32Load16U(ref m) => {
                     let i = frame.pop_operand()?.get_i32()? as u32;
-                    let v = int_ops::i32_load(i, m, &mut rt.mem, 2)?;
+                    let v = int_ops::i32_load(i, m, &mut self.rt.mem, 2)?;
                     frame.push_operand(v);
                 },
                 Opcode::I32Load16S(ref m) => {
                     let i = frame.pop_operand()?.get_i32()? as u32;
-                    let v = int_ops::i32_load(i, m, &mut rt.mem, 2)?;
+                    let v = int_ops::i32_load(i, m, &mut self.rt.mem, 2)?;
                     frame.push_operand(v);
                 },
                 Opcode::I32Store(ref m) => {
                     let c = frame.pop_operand()?;
                     let i = frame.pop_operand()?.get_i32()? as u32;
-                    int_ops::i32_store(i, c, m, &mut rt.mem, 4)?;
+                    int_ops::i32_store(i, c, m, &mut self.rt.mem, 4)?;
                 },
                 Opcode::I32Store8(ref m) => {
                     let c = frame.pop_operand()?;
                     let i = frame.pop_operand()?.get_i32()? as u32;
-                    int_ops::i32_store(i, c, m, &mut rt.mem, 1)?;
+                    int_ops::i32_store(i, c, m, &mut self.rt.mem, 1)?;
                 },
                 Opcode::I32Store16(ref m) => {
                     let c = frame.pop_operand()?;
                     let i = frame.pop_operand()?.get_i32()? as u32;
-                    int_ops::i32_store(i, c, m, &mut rt.mem, 2)?;
+                    int_ops::i32_store(i, c, m, &mut self.rt.mem, 2)?;
                 },
                 Opcode::I64Const(v) => {
                     frame.push_operand(Value::I64(v));
@@ -727,63 +780,68 @@ impl Module {
                 },
                 Opcode::I64Load(ref m) => {
                     let i = frame.pop_operand()?.get_i32()? as u32;
-                    let v = int_ops::i64_load(i, m, &mut rt.mem, 8)?;
+                    let v = int_ops::i64_load(i, m, &mut self.rt.mem, 8)?;
                     frame.push_operand(v);
                 },
                 Opcode::I64Load8U(ref m) => {
                     let i = frame.pop_operand()?.get_i32()? as u32;
-                    let v = int_ops::i64_load(i, m, &mut rt.mem, 1)?;
+                    let v = int_ops::i64_load(i, m, &mut self.rt.mem, 1)?;
                     frame.push_operand(v);
                 },
                 Opcode::I64Load8S(ref m) => {
                     let i = frame.pop_operand()?.get_i32()? as u32;
-                    let v = int_ops::i64_load(i, m, &mut rt.mem, 1)?;
+                    let v = int_ops::i64_load(i, m, &mut self.rt.mem, 1)?;
                     frame.push_operand(v);
                 },
                 Opcode::I64Load16U(ref m) => {
                     let i = frame.pop_operand()?.get_i32()? as u32;
-                    let v = int_ops::i64_load(i, m, &mut rt.mem, 2)?;
+                    let v = int_ops::i64_load(i, m, &mut self.rt.mem, 2)?;
                     frame.push_operand(v);
                 },
                 Opcode::I64Load16S(ref m) => {
                     let i = frame.pop_operand()?.get_i32()? as u32;
-                    let v = int_ops::i64_load(i, m, &mut rt.mem, 2)?;
+                    let v = int_ops::i64_load(i, m, &mut self.rt.mem, 2)?;
                     frame.push_operand(v);
                 },
                 Opcode::I64Load32U(ref m) => {
                     let i = frame.pop_operand()?.get_i32()? as u32;
-                    let v = int_ops::i64_load(i, m, &mut rt.mem, 4)?;
+                    let v = int_ops::i64_load(i, m, &mut self.rt.mem, 4)?;
                     frame.push_operand(v);
                 },
                 Opcode::I64Load32S(ref m) => {
                     let i = frame.pop_operand()?.get_i32()? as u32;
-                    let v = int_ops::i64_load(i, m, &mut rt.mem, 4)?;
+                    let v = int_ops::i64_load(i, m, &mut self.rt.mem, 4)?;
                     frame.push_operand(v);
                 },
                 Opcode::I64Store(ref m) => {
                     let c = frame.pop_operand()?;
                     let i = frame.pop_operand()?.get_i32()? as u32;
-                    int_ops::i64_store(i, c, m, &mut rt.mem, 8)?;
+                    int_ops::i64_store(i, c, m, &mut self.rt.mem, 8)?;
                 },
                 Opcode::I64Store8(ref m) => {
                     let c = frame.pop_operand()?;
                     let i = frame.pop_operand()?.get_i32()? as u32;
-                    int_ops::i64_store(i, c, m, &mut rt.mem, 1)?;
+                    int_ops::i64_store(i, c, m, &mut self.rt.mem, 1)?;
                 },
                 Opcode::I64Store16(ref m) => {
                     let c = frame.pop_operand()?;
                     let i = frame.pop_operand()?.get_i32()? as u32;
-                    int_ops::i64_store(i, c, m, &mut rt.mem, 2)?;
+                    int_ops::i64_store(i, c, m, &mut self.rt.mem, 2)?;
                 },
                 Opcode::I64Store32(ref m) => {
                     let c = frame.pop_operand()?;
                     let i = frame.pop_operand()?.get_i32()? as u32;
-                    int_ops::i64_store(i, c, m, &mut rt.mem, 4)?;
+                    int_ops::i64_store(i, c, m, &mut self.rt.mem, 4)?;
                 },
                 //_ => return Err(ExecuteError::NotImplemented)
             }
         }
+    }
+}
 
-        Err(ExecuteError::UnreachableExecuted)
+impl Module {
+    pub fn execute(&self, rt_config: RuntimeConfig, initial_func: usize) -> ExecuteResult<Option<Value>> {
+        let mut vm = VirtualMachine::new(self, rt_config)?;
+        vm.execute(initial_func, &[])
     }
 }

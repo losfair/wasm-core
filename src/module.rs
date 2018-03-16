@@ -1,4 +1,6 @@
 use alloc::Vec;
+use alloc::String;
+use alloc::BTreeMap;
 
 use opcode::Opcode;
 use bincode;
@@ -7,7 +9,13 @@ use bincode;
 pub struct Module {
     pub types: Vec<Type>,
     pub functions: Vec<Function>,
-    pub data_segments: Vec<DataSegment>
+    pub data_segments: Vec<DataSegment>,
+    pub exports: BTreeMap<String, Export>
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum Export {
+    Function(usize)
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
