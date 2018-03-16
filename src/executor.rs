@@ -48,8 +48,7 @@ pub enum Mutable {
 
 pub struct RuntimeInfo {
     mem: Memory,
-    store: Store,
-    global_addrs: Vec<usize>
+    globals: Vec<Value>
 }
 
 #[derive(Clone)]
@@ -65,10 +64,7 @@ impl RuntimeInfo {
                 config.mem_default_size_pages * PAGE_SIZE,
                 config.mem_max_size_pages.map(|v| v * PAGE_SIZE)
             ),
-            store: Store {
-                values: Vec::new()
-            },
-            global_addrs: Vec::new()
+            globals: Vec::new()
         }
     }
 }
@@ -120,15 +116,6 @@ impl Memory {
 
         Value::I32((self.data.len() / PAGE_SIZE) as i32)
     }
-}
-
-pub struct Store {
-    values: Vec<StoreValue>
-}
-
-#[derive(Copy, Clone, Debug)]
-pub enum StoreValue {
-    Global(Value, Mutable)
 }
 
 #[derive(Clone, Debug)]
@@ -223,6 +210,10 @@ impl<'a> VirtualMachine<'a> {
             for i in 0..ds.data.len() {
                 vm.rt.mem.data[offset + i] = ds.data[i];
             }
+        }
+
+        for g in &module.globals {
+            vm.rt.globals.push(g.value);
         }
 
         Ok(vm)
@@ -488,33 +479,18 @@ impl<'a> VirtualMachine<'a> {
                 },
                 Opcode::GetGlobal(idx) => {
                     let idx = idx as usize;
-                    if idx >= self.rt.global_addrs.len() {
+                    if idx >= self.rt.globals.len() {
                         return Err(ExecuteError::GlobalIndexOutOfBound);
                     }
-                    let addr = self.rt.global_addrs[idx];
-                    if addr >= self.rt.store.values.len() {
-                        return Err(ExecuteError::GlobalIndexOutOfBound);
-                    }
-                    let v = self.rt.store.values[addr];
-                    match v {
-                        StoreValue::Global(v, _) => frame.push_operand(v),
-                        _ => {
-                            return Err(ExecuteError::TypeMismatch)
-                        }
-                    }
+                    frame.push_operand(self.rt.globals[idx])
                 },
                 Opcode::SetGlobal(idx) => {
                     let idx = idx as usize;
-                    if idx >= self.rt.global_addrs.len() {
+                    if idx >= self.rt.globals.len() {
                         return Err(ExecuteError::GlobalIndexOutOfBound);
                     }
-                    let addr = self.rt.global_addrs[idx];
-                    if addr >= self.rt.store.values.len() {
-                        return Err(ExecuteError::GlobalIndexOutOfBound);
-                    }
-
                     let v = frame.pop_operand()?;
-                    self.rt.store.values[addr] = StoreValue::Global(v, Mutable::Mut);
+                    self.rt.globals[idx] = v;
                 },
                 Opcode::Unreachable => {
                     return Err(ExecuteError::UnreachableExecuted);

@@ -96,7 +96,7 @@ impl Label {
     }
 }
 
-pub fn eval_init_expr(expr: &elements::InitExpr) -> i32 {
+pub fn eval_init_expr(expr: &elements::InitExpr) -> wasm_core::value::Value {
     let mut code = translate_opcodes(expr.code());
     code.push(wasm_core::opcode::Opcode::Return);
 
@@ -116,13 +116,14 @@ pub fn eval_init_expr(expr: &elements::InitExpr) -> i32 {
         ],
         data_segments: vec! [],
         exports: BTreeMap::new(),
-        tables: Vec::new()
+        tables: Vec::new(),
+        globals: Vec::new()
     };
     let val = module.execute(RuntimeConfig {
         mem_default_size_pages: 1,
         mem_max_size_pages: Some(1)
     }, 0).unwrap().unwrap();
-    val.get_i32().unwrap()
+    val
 }
 
 pub fn translate_opcodes(ops: &[elements::Opcode]) -> Vec<wasm_core::opcode::Opcode> {
@@ -390,7 +391,7 @@ pub fn translate_module(code: &[u8]) -> Vec<u8> {
     let mut data_segs: Vec<wasm_core::module::DataSegment> = Vec::new();
     if let Some(ds) = module.data_section() {
         for seg in ds.entries() {
-            let offset = eval_init_expr(seg.offset()) as u32;
+            let offset = eval_init_expr(seg.offset()).get_i32().unwrap() as u32;
             //eprintln!("Offset resolved: {} {:?}", offset, seg.value());
             data_segs.push(wasm_core::module::DataSegment {
                 offset: offset,
@@ -448,7 +449,7 @@ pub fn translate_module(code: &[u8]) -> Vec<u8> {
 
     if let Some(elems) = module.elements_section() {
         for entry in elems.entries() {
-            let offset = eval_init_expr(entry.offset()) as u32 as usize;
+            let offset = eval_init_expr(entry.offset()).get_i32().unwrap() as u32 as usize;
             let members = entry.members();
             let end = offset + members.len();
             let tt = &mut tables[entry.index() as usize];
@@ -479,12 +480,21 @@ pub fn translate_module(code: &[u8]) -> Vec<u8> {
         eprintln!("Warning: Elements section not found");
     }
 
+    let globals: Vec<wasm_core::module::Global> = module.global_section().and_then(|gs| {
+        Some(gs.entries().iter().map(|entry| {
+            wasm_core::module::Global {
+                value: eval_init_expr(entry.init_expr())
+            }
+        }).collect())
+    }).or_else(|| Some(Vec::new())).unwrap();
+
     let target_module = wasm_core::module::Module {
         types: types,
         functions: functions,
         data_segments: data_segs,
         exports: export_map,
-        tables: tables
+        tables: tables,
+        globals: globals
     };
     let serialized = target_module.std_serialize().unwrap();
 

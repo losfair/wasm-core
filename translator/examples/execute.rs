@@ -20,8 +20,8 @@ fn main() {
 
     let module = wasm_core::module::Module::std_deserialize(code.as_slice()).unwrap();
     let mut vm: VirtualMachine = VirtualMachine::new(&module, RuntimeConfig {
-        mem_default_size_pages: 8,
-        mem_max_size_pages: Some(32)
+        mem_default_size_pages: 64,
+        mem_max_size_pages: Some(128)
     }).unwrap();
 
     let entry = vm.lookup_exported_func(entry_fn).unwrap();

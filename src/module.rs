@@ -2,6 +2,8 @@ use alloc::Vec;
 use alloc::String;
 use alloc::BTreeMap;
 
+use value::Value;
+
 use opcode::Opcode;
 use bincode;
 
@@ -11,7 +13,13 @@ pub struct Module {
     pub functions: Vec<Function>,
     pub data_segments: Vec<DataSegment>,
     pub exports: BTreeMap<String, Export>,
-    pub tables: Vec<Table>
+    pub tables: Vec<Table>,
+    pub globals: Vec<Global>
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Global {
+    pub value: Value
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
