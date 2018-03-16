@@ -8,7 +8,9 @@ extern crate alloc;
 extern crate serde;
 #[macro_use]
 extern crate serde_derive;
-extern crate bincode;
+extern crate bincode_no_std;
+
+use bincode_no_std as bincode;
 
 pub mod opcode;
 pub mod executor;

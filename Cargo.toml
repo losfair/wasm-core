@@ -9,4 +9,4 @@ keywords = ["wasm", "webassembly"]
 [dependencies]
 serde = { version = "1", default-features = false }
 serde_derive = { version = "1", default-features = false }
-bincode = { git = "https://github.com/losfair/bincode" }
+bincode-no-std = { version = "1.0.0" }
