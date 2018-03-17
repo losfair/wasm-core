@@ -204,41 +204,78 @@ pub fn i32_wrap_i64(a: i64) -> Value {
     Value::I32(a as i32)
 }
 
+unsafe trait LoadStore: Copy + Sized {}
+unsafe impl LoadStore for i32 {}
+unsafe impl LoadStore for i64 {}
+
+#[inline]
+fn load_from_mem<T: LoadStore>(index: u32, m: &Memarg, storage: &mut Memory, n: u32) -> ExecuteResult<T> {
+    let n = n as usize;
+
+    let t_size = ::prelude::mem::size_of::<T>();
+    if n > t_size {
+        return Err(ExecuteError::InvalidMemoryOperation);
+    }
+
+    let data: &[u8] = storage.data.as_slice();
+
+    let ea = (index + m.offset) as usize;
+    if ea + n > data.len() {
+        return Err(ExecuteError::AddrOutOfBound(ea as u32, n as u32));
+    }
+
+    // n <= sizeof(T) holds here so we can copy safely.
+    unsafe {
+        let mut result: T = ::prelude::mem::zeroed();
+        ::prelude::ptr::copy(
+            &data[ea] as *const u8,
+            &mut result as *mut T as *mut u8,
+            n
+        );
+
+        Ok(result)
+    }
+}
+
+#[inline]
+fn store_to_mem<T: LoadStore>(index: u32, val: T, m: &Memarg, storage: &mut Memory, n: u32) -> ExecuteResult<()> {
+    let n = n as usize;
+
+    let t_size = ::prelude::mem::size_of::<T>();
+    if n > t_size {
+        return Err(ExecuteError::InvalidMemoryOperation);
+    }
+
+    let data: &mut [u8] = storage.data.as_mut_slice();
+
+    let ea = (index + m.offset) as usize;
+
+    // this will not overflow because all of index, m.offset
+    // and n is in the range of u32.
+    if ea + n > data.len() {
+        return Err(ExecuteError::AddrOutOfBound(ea as u32, n as u32));
+    }
+
+    // ea + n <= data.len() && n <= sizeof(T) holds here so we can copy safely.
+    unsafe {
+        ::prelude::ptr::copy(
+            &val as *const T as *const u8,
+            &mut data[ea] as *mut u8,
+            n
+        );
+    }
+
+    Ok(())
+}
+
 #[inline]
 pub fn i32_load(index: u32, m: &Memarg, storage: &mut Memory, n: u32) -> ExecuteResult<Value> {
-    let ea = index + m.offset;
-    if (ea + n) as usize > storage.data.len() {
-        return Err(ExecuteError::AddrOutOfBound(ea, n));
-    }
-
-    let mut result: u32 = 0;
-
-    // Little endian
-    for i in 0..n {
-        let r = n - 1 - i;
-        result <<= 8;
-        result |= storage.data[(ea + r) as usize] as u32;
-    }
-
-    Ok(Value::I32(result as i32))
+    Ok(Value::I32(load_from_mem(index, m, storage, n)?))
 }
 
 #[inline]
 pub fn i32_store(index: u32, val: Value, m: &Memarg, storage: &mut Memory, n: u32) -> ExecuteResult<()> {
-    let ea = index + m.offset;
-    if (ea + n) as usize > storage.data.len() {
-        return Err(ExecuteError::AddrOutOfBound(ea, n));
-    }
-
-    let mut uni = val.get_i32()? as u32;
-
-    // Little endian
-    for i in 0..n {
-        storage.data[(ea + i) as usize] = (uni & 0xff) as u8;
-        uni >>= 8;
-    }
-
-    Ok(())
+    store_to_mem(index, val.get_i32()?, m, storage, n)
 }
 
 #[inline]
@@ -449,37 +486,10 @@ pub fn i64_extend_i32_s(v: i32) -> Value {
 
 #[inline]
 pub fn i64_load(index: u32, m: &Memarg, storage: &mut Memory, n: u32) -> ExecuteResult<Value> {
-    let ea = index + m.offset;
-    if (ea + n) as usize > storage.data.len() {
-        return Err(ExecuteError::AddrOutOfBound(ea, n));
-    }
-
-    let mut result: u64 = 0;
-
-    // Little endian
-    for i in 0..n {
-        let r = n - 1 - i;
-        result <<= 8;
-        result |= storage.data[(ea + r) as usize] as u64;
-    }
-
-    Ok(Value::I64(result as i64))
+    Ok(Value::I64(load_from_mem(index, m, storage, n)?))
 }
 
 #[inline]
 pub fn i64_store(index: u32, val: Value, m: &Memarg, storage: &mut Memory, n: u32) -> ExecuteResult<()> {
-    let ea = index + m.offset;
-    if (ea + n) as usize > storage.data.len() {
-        return Err(ExecuteError::AddrOutOfBound(ea, n));
-    }
-
-    let mut uni = val.get_i64()? as u64;
-
-    // Little endian
-    for i in 0..n {
-        storage.data[(ea + i) as usize] = (uni & 0xff) as u8;
-        uni >>= 8;
-    }
-
-    Ok(())
+    store_to_mem(index, val.get_i64()?, m, storage, n)
 }
