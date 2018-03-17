@@ -20,7 +20,7 @@ pub struct Module {
 pub struct Native {
     pub module: String,
     pub field: String,
-    pub typeidx: usize
+    pub typeidx: u32
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -37,7 +37,7 @@ pub struct Table {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Export {
-    Function(usize)
+    Function(u32)
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
@@ -48,7 +48,7 @@ pub enum Type {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Function {
     pub name: Option<String>,
-    pub typeidx: usize,
+    pub typeidx: u32,
     pub locals: Vec<ValType>,
     pub body: FunctionBody
 }

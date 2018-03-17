@@ -320,7 +320,7 @@ impl<'a> VirtualMachine<'a> {
                     n.module.clone(),
                     n.field.clone()
                 ),
-                typeidx: n.typeidx
+                typeidx: n.typeidx as usize
             });
         }
 
@@ -338,7 +338,7 @@ impl<'a> VirtualMachine<'a> {
     pub fn lookup_exported_func(&self, name: &str) -> ExecuteResult<usize> {
         match self.module.exports.get(name) {
             Some(v) => match *v {
-                Export::Function(id) => Ok(id)
+                Export::Function(id) => Ok(id as usize)
             },
             None => Err(ExecuteError::FunctionNotFound)
         }
@@ -386,8 +386,8 @@ impl<'a> VirtualMachine<'a> {
 
         let mut new_frame = Frame::setup_no_locals(idx);
 
-        let ty = if current_func.typeidx < module.types.len() {
-            &module.types[current_func.typeidx]
+        let ty = if (current_func.typeidx as usize) < module.types.len() {
+            &module.types[current_func.typeidx as usize]
         } else {
             return Err(ExecuteError::TypeIdxIndexOufOfBound);
         };
@@ -421,11 +421,11 @@ impl<'a> VirtualMachine<'a> {
 
         // FIXME: Handle initial call gracefully
         {
-            if current_func.typeidx >= self.module.types.len() {
+            if current_func.typeidx as usize >= self.module.types.len() {
                 return Err(ExecuteError::TypeIdxIndexOufOfBound);
             }
 
-            let Type::Func(ref initial_func_args_type, _) = self.module.types[current_func.typeidx];
+            let Type::Func(ref initial_func_args_type, _) = self.module.types[current_func.typeidx as usize];
             if args.len() != initial_func_args_type.len() {
                 return Err(ExecuteError::TypeMismatch);
             }
@@ -511,7 +511,7 @@ impl<'a> VirtualMachine<'a> {
                         return Err(ExecuteError::FunctionIndexOutOfBound);
                     }
 
-                    let actual_typeidx = self.module.functions[elem as usize].typeidx;
+                    let actual_typeidx = self.module.functions[elem as usize].typeidx as usize;
                     if actual_typeidx >= self.module.types.len() {
                         return Err(ExecuteError::TypeIdxIndexOufOfBound);
                     }
@@ -563,8 +563,8 @@ impl<'a> VirtualMachine<'a> {
                     // Pop the current frame.
                     let mut prev_frame = self.frames.pop().unwrap();
 
-                    let ty = if current_func.typeidx < self.module.types.len() {
-                        &self.module.types[current_func.typeidx]
+                    let ty = if (current_func.typeidx as usize) < self.module.types.len() {
+                        &self.module.types[current_func.typeidx as usize]
                     } else {
                         return Err(ExecuteError::TypeIdxIndexOufOfBound);
                     };

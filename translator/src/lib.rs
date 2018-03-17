@@ -365,7 +365,7 @@ pub fn translate_module(code: &[u8]) -> Vec<u8> {
             natives.push(Native {
                 module: entry.module().to_string(),
                 field: entry.field().to_string(),
-                typeidx: typeidx
+                typeidx: typeidx as u32
             });
 
             let mut opcodes: Vec<Opcode> = vec! [];
@@ -380,7 +380,7 @@ pub fn translate_module(code: &[u8]) -> Vec<u8> {
 
             functions.push(wasm_core::module::Function {
                 name: None,
-                typeidx: typeidx,
+                typeidx: typeidx as u32,
                 locals: Vec::new(),
                 body: wasm_core::module::FunctionBody {
                     opcodes: opcodes
@@ -413,7 +413,7 @@ pub fn translate_module(code: &[u8]) -> Vec<u8> {
 
         wasm_core::module::Function {
             name: None,
-            typeidx: typeidx,
+            typeidx: typeidx as u32,
             locals: locals,
             body: wasm_core::module::FunctionBody {
                 opcodes: opcodes
@@ -463,7 +463,7 @@ pub fn translate_module(code: &[u8]) -> Vec<u8> {
                 Internal::Function(id) => {
                     export_map.insert(
                         field.to_string(),
-                        wasm_core::module::Export::Function(id as usize)
+                        wasm_core::module::Export::Function(id as u32)
                     );
                 },
                 _ => {
