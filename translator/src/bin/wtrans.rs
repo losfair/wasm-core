@@ -1,4 +1,5 @@
 extern crate translator;
+extern crate serde_json;
 
 use std::fs::File;
 use std::env;
@@ -47,6 +48,9 @@ fn main() {
 
     if mode == "build" {
         ::std::io::stdout().write(serialized.as_slice()).unwrap();
+    } else if mode == "build_json" {
+        let module = Module::std_deserialize(serialized.as_slice()).unwrap();
+        println!("{}", serde_json::to_string(&module).unwrap());
     } else if mode == "exec" {
         let entry = args.next().expect("Entry function required");
 
