@@ -73,17 +73,17 @@ pub enum ValType {
 }
 
 impl Module {
-    pub fn std_serialize(&self) -> Option<Vec<u8>> {
+    pub fn std_serialize(&self) -> Result<Vec<u8>, String> {
         match bincode::serialize(self) {
-            Ok(v) => Some(v),
-            Err(_) => None
+            Ok(v) => Ok(v),
+            Err(e) => Err(format!("{:?}", e))
         }
     }
 
-    pub fn std_deserialize(data: &[u8]) -> Option<Module> {
+    pub fn std_deserialize(data: &[u8]) -> Result<Module, String> {
         match bincode::deserialize(data) {
-            Ok(v) => Some(v),
-            Err(_) => None
+            Ok(v) => Ok(v),
+            Err(e) => Err(format!("{:?}", e))
         }
     }
 }

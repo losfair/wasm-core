@@ -1,5 +1,6 @@
 use module::{Module, Function, Type, Export, Table};
 use prelude::{Box, Vec, String};
+use prelude::str;
 use opcode::Opcode;
 use int_ops;
 use value::Value;
@@ -24,7 +25,8 @@ pub enum ExecuteError {
     TypeMismatch,
     ValueTypeMismatch,
     UndefinedTableEntry,
-    FunctionNotFound
+    FunctionNotFound,
+    InvalidMemoryOperation
 }
 
 impl prelude::fmt::Display for ExecuteError {
@@ -65,6 +67,7 @@ pub enum Mutable {
 }
 
 pub struct RuntimeInfo {
+    debug_print_hook: Option<fn(s: &str)>,
     mem: Memory,
     globals: Vec<Value>,
     resolver: Box<NativeResolver>
@@ -82,7 +85,12 @@ impl NativeFunction {
             NativeFunction::Uninitialized(ref m, ref f) => {
                 let target = match rt.resolver.resolve(m.as_str(), f.as_str()) {
                     Some(v) => v,
-                    None => return Err(ExecuteError::FunctionNotFound)
+                    None => {
+                        match NativeFunction::builtin_resolve(rt, m.as_str(), f.as_str()) {
+                            Some(v) => v,
+                            None => return Err(ExecuteError::FunctionNotFound)
+                        }
+                    }
                 };
                 *self = NativeFunction::Ready(target);
             },
@@ -95,11 +103,42 @@ impl NativeFunction {
             Err(ExecuteError::UnreachableExecuted)
         }
     }
+
+    fn builtin_resolve(rt: &RuntimeInfo, module: &str, field: &str) -> Option<NativeEntry> {
+        if module != "env" {
+            return None;
+        }
+
+        let debug_print = rt.debug_print_hook;
+
+        match field {
+            "__wcore_print" => Some(Box::new(move |rt, args| {
+                if args.len() != 2 {
+                    return Err(ExecuteError::TypeMismatch);
+                }
+                let ptr = args[0].get_i32()? as usize;
+                let len = args[1].get_i32()? as usize;
+                if ptr >= rt.mem.data.len() || ptr + len < ptr || ptr + len > rt.mem.data.len() {
+                    return Err(ExecuteError::AddrOutOfBound(ptr as u32, len as u32));
+                }
+                let text = match str::from_utf8(&rt.mem.data[ptr..ptr + len]) {
+                    Ok(v) => v,
+                    Err(_) => return Err(ExecuteError::Custom("Invalid UTF-8".to_string()))
+                };
+                if let Some(f) = debug_print {
+                    f(text);
+                }
+                Ok(None)
+            })),
+            _ => None
+        }
+    }
 }
 
 impl RuntimeInfo {
     pub fn new(config: RuntimeConfig) -> RuntimeInfo {
         RuntimeInfo {
+            debug_print_hook: None,
             mem: Memory::new(
                 config.mem_default_size_pages * PAGE_SIZE,
                 config.mem_max_size_pages.map(|v| v * PAGE_SIZE)
@@ -107,6 +146,20 @@ impl RuntimeInfo {
             globals: Vec::new(),
             resolver: config.resolver
         }
+    }
+
+    pub fn debug_print(&self, s: &str) {
+        if let Some(hook) = self.debug_print_hook {
+            hook(s);
+        }
+    }
+
+    pub fn get_memory(&self) -> &[u8] {
+        self.mem.data.as_slice()
+    }
+
+    pub fn get_memory_mut(&mut self) -> &mut Vec<u8> {
+        &mut self.mem.data
     }
 }
 
@@ -274,6 +327,14 @@ impl<'a> VirtualMachine<'a> {
         Ok(vm)
     }
 
+    pub fn get_runtime_info(&self) -> &RuntimeInfo {
+        &self.rt
+    }
+
+    pub fn get_runtime_info_mut(&mut self) -> &mut RuntimeInfo {
+        &mut self.rt
+    }
+
     pub fn lookup_exported_func(&self, name: &str) -> ExecuteResult<usize> {
         match self.module.exports.get(name) {
             Some(v) => match *v {
@@ -304,6 +365,10 @@ impl<'a> VirtualMachine<'a> {
         Backtrace {
             frames: bt_frames
         }
+    }
+
+    pub fn set_debug_print_hook(&mut self, f: fn(s: &str)) {
+        self.rt.debug_print_hook = Some(f);
     }
 
     fn prep_invoke(
@@ -352,6 +417,7 @@ impl<'a> VirtualMachine<'a> {
     ) -> ExecuteResult<Option<Value>> {
         let mut current_func: &Function = &self.module.functions[initial_func];
         let initial_stack_depth: usize = self.frames.len();
+        let debug_print = self.rt.debug_print_hook;
 
         // FIXME: Handle initial call gracefully
         {
@@ -385,6 +451,10 @@ impl<'a> VirtualMachine<'a> {
             }
             let op = &current_func.body.opcodes[ip];
             ip += 1;
+
+            /*if let Some(f) = debug_print {
+                f(format!("{:?}", op).as_str());
+            }*/
 
             match *op {
                 Opcode::Drop => {
