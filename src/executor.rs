@@ -1,10 +1,9 @@
 use module::{Module, Function, Type, Export, Table};
-use core::result::Result;
-use alloc::boxed::Box;
-use alloc::{Vec, String};
+use prelude::{Box, Vec, String};
 use opcode::Opcode;
 use int_ops;
 use value::Value;
+use prelude;
 
 const PAGE_SIZE: usize = 65536;
 
@@ -28,9 +27,9 @@ pub enum ExecuteError {
     FunctionNotFound
 }
 
-impl ::core::fmt::Display for ExecuteError {
-    fn fmt(&self, f: &mut ::core::fmt::Formatter) -> Result<(), ::core::fmt::Error> {
-        <Self as ::core::fmt::Debug>::fmt(self, f)
+impl prelude::fmt::Display for ExecuteError {
+    fn fmt(&self, f: &mut prelude::fmt::Formatter) -> Result<(), prelude::fmt::Error> {
+        <Self as prelude::fmt::Debug>::fmt(self, f)
     }
 }
 

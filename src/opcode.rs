@@ -1,4 +1,4 @@
-use alloc::{Vec, String};
+use prelude::{Vec, String};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Opcode {

@@ -1,4 +1,4 @@
-use core::intrinsics;
+use prelude::intrinsics;
 use value::Value;
 use opcode::Memarg;
 use executor::Memory;

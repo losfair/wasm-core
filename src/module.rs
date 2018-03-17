@@ -1,6 +1,4 @@
-use alloc::Vec;
-use alloc::String;
-use alloc::BTreeMap;
+use prelude::{Vec, String, BTreeMap};
 
 use value::Value;
 
