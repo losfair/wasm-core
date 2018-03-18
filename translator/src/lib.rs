@@ -69,7 +69,7 @@ impl Continuation {
 enum LabelType {
     Block,
     Loop(usize), // begin
-    If,
+    If(usize), // branch-if-false instr
     Else
 }
 
@@ -88,7 +88,7 @@ impl Label {
 
     fn terminate(&self, opcodes: &mut [wasm_core::opcode::Opcode]) {
         let target = match self.ty {
-            LabelType::Block | LabelType::If | LabelType::Else => opcodes.len(),
+            LabelType::Block | LabelType::If(_) | LabelType::Else => opcodes.len(),
             LabelType::Loop(begin) => begin
         };
         for cont in &self.continuations {
@@ -97,7 +97,10 @@ impl Label {
     }
 }
 
-pub fn eval_init_expr(expr: &elements::InitExpr) -> wasm_core::value::Value {
+pub fn eval_init_expr(
+    expr: &elements::InitExpr,
+    globals: &mut Vec<wasm_core::module::Global>
+) -> wasm_core::value::Value {
     let mut code = translate_opcodes(expr.code());
     code.push(wasm_core::opcode::Opcode::Return);
 
@@ -118,7 +121,7 @@ pub fn eval_init_expr(expr: &elements::InitExpr) -> wasm_core::value::Value {
         data_segments: vec! [],
         exports: BTreeMap::new(),
         tables: Vec::new(),
-        globals: Vec::new(),
+        globals: globals.clone(),
         natives: Vec::new()
     };
     let val = module.execute(RuntimeConfig {
@@ -260,25 +263,57 @@ pub fn translate_opcodes(ops: &[elements::Opcode]) -> Vec<wasm_core::opcode::Opc
 
             PwOp::End => {
                 if let Some(label) = labels.pop() {
+                    if let LabelType::If(instr_id) = label.ty {
+                        let result_len = result.len() as u32;
+                        if let WcOp::Jmp(ref mut t) = result[instr_id] {
+                            *t = result_len;
+                        } else {
+                            panic!("Expecting Jmp");
+                        }
+                    }
+                    // Make emscripten happy
+                    /*
                     if label.ty == LabelType::If {
                         panic!("Expecting Else, not End");
                     }
+                    */
                     label.terminate(result.as_mut_slice());
                 } else {
                     expecting_seq_end = true;
                 }
             },
             PwOp::If(_) => {
-                labels.push(Label::new(LabelType::If));
+                let len = result.len();
+                result.push(WcOp::JmpIf((len + 2) as u32));
+
+                let mut new_label = Label::new(LabelType::If(result.len()));
+                result.push(WcOp::Jmp(0xffffffff));
+
+                labels.push(new_label);
             },
             PwOp::Else => {
                 let label = labels.pop().expect("Got End outside of a block");
-                if label.ty != LabelType::If {
-                    panic!("Else must follows an If");
+
+                {
+                    match label.ty {
+                        LabelType::If(instr_id) => {
+                            result.push(WcOp::Jmp(0xffffffff));
+
+                            let result_len = result.len() as u32;
+                            if let WcOp::Jmp(ref mut t) = result[instr_id] {
+                                *t = result_len as u32;
+                            } else {
+                                panic!("Expecting Jmp");
+                            }
+                        },
+                        _ => panic!("Else must follow an If")
+                    }
                 }
+
                 // defer out-branches to else blk
                 let mut new_label = Label::new(LabelType::Else);
                 new_label.continuations = label.continuations;
+                new_label.continuations.push(Continuation::with_opcode_index(result.len() - 1)); // Jmp of the `if` branch
                 labels.push(new_label);
             },
             PwOp::Block(_) => {
@@ -309,6 +344,12 @@ pub fn translate_opcodes(ops: &[elements::Opcode]) -> Vec<wasm_core::opcode::Opc
                 let label = labels.iter_mut().rev().nth(otherwise as usize).expect("Branch target out of bound");
                 label.continuations.push(Continuation::brtable(result.len(), targets.len()));
                 result.push(WcOp::JmpTable(jmp_targets, 0xffffffff));
+            },
+            PwOp::F32Const(v) => {
+                result.push(WcOp::F32Const(v));
+            },
+            PwOp::F64Const(v) => {
+                result.push(WcOp::F64Const(v));
             },
             _ => {
                 eprintln!("Warning: Generating trap for unimplemented opcode: {:?}", op);
@@ -346,49 +387,124 @@ pub fn translate_module(code: &[u8]) -> Vec<u8> {
         Vec::new()
     };
 
+    let mut emscripten_patch: bool = false;
     let mut functions: Vec<wasm_core::module::Function> = Vec::new();
     let mut natives: Vec<wasm_core::module::Native> = Vec::new();
+    let mut globals: Vec<wasm_core::module::Global> = Vec::new();
+    let mut tables: Vec<wasm_core::module::Table> = Vec::new();
 
     module.import_section().and_then(|isec| {
         for entry in isec.entries() {
-            let typeidx = if let elements::External::Function(id) = *entry.external() {
-                id
-            } else {
-                eprintln!("Warning: Import ignored: {:?}", entry);
-                continue;
-            } as usize;
+            use self::elements::External;
+            match *entry.external() {
+                External::Function(typeidx) => {
+                    let typeidx = typeidx as usize;
 
-            use self::wasm_core::opcode::Opcode;
-            use self::wasm_core::module::Native;
+                    use self::wasm_core::opcode::Opcode;
+                    use self::wasm_core::module::Native;
 
-            let native_id = natives.len();
-            natives.push(Native {
-                module: entry.module().to_string(),
-                field: entry.field().to_string(),
-                typeidx: typeidx as u32
-            });
+                    let native_id = natives.len();
+                    natives.push(Native {
+                        module: entry.module().to_string(),
+                        field: entry.field().to_string(),
+                        typeidx: typeidx as u32
+                    });
 
-            let mut opcodes: Vec<Opcode> = vec! [];
-            let wasm_core::module::Type::Func(ref ty, _) = types[typeidx];
+                    let mut opcodes: Vec<Opcode> = vec! [];
+                    let wasm_core::module::Type::Func(ref ty, _) = types[typeidx];
 
-            for i in 0..ty.len() {
-                opcodes.push(Opcode::GetLocal(i as u32));
-            }
+                    for i in 0..ty.len() {
+                        opcodes.push(Opcode::GetLocal(i as u32));
+                    }
 
-            opcodes.push(Opcode::NativeInvoke(native_id as u32));
-            opcodes.push(Opcode::Return);
+                    opcodes.push(Opcode::NativeInvoke(native_id as u32));
+                    opcodes.push(Opcode::Return);
 
-            functions.push(wasm_core::module::Function {
-                name: None,
-                typeidx: typeidx as u32,
-                locals: Vec::new(),
-                body: wasm_core::module::FunctionBody {
-                    opcodes: opcodes
+                    functions.push(wasm_core::module::Function {
+                        name: None,
+                        typeidx: typeidx as u32,
+                        locals: Vec::new(),
+                        body: wasm_core::module::FunctionBody {
+                            opcodes: opcodes
+                        }
+                    });
+                },
+                External::Global(ref gt) => {
+                    let v = try_patch_emscripten_global(entry.field());
+                    if let Some(v) = v {
+                        eprintln!("Global {:?} patched as an Emscripten import", entry);
+                        globals.push(wasm_core::module::Global {
+                            value: v
+                        });
+                        emscripten_patch = true;
+                    } else {
+                        eprintln!("Warning: Generating undef for Global import: {:?}", entry);
+                        globals.push(wasm_core::module::Global {
+                            value: wasm_core::value::Value::default()
+                        });
+                    }
+                },
+                External::Table(ref tt) => {
+                    eprintln!("Warning: Generating undef for Table import: {:?}", entry);
+                    let limits: &elements::ResizableLimits = tt.limits();
+                    let (min, max) = (limits.initial(), limits.maximum());
+
+                    // Hard limit.
+                    if min > 1048576 {
+                        panic!("Hard limit for table size (min) exceeded");
+                    }
+
+                    let elements: Vec<Option<u32>> = vec! [ None; min as usize ];
+                    tables.push(wasm_core::module::Table {
+                        min: min,
+                        max: max,
+                        elements: elements
+                    });
+                },
+                _ => {
+                    eprintln!("Warning: Import ignored: {:?}", entry);
+                    continue;
                 }
-            });
+            }
         }
         Some(())
     });
+
+    {
+        let to_extend = module.global_section().and_then(|gs| {
+            Some(gs.entries().iter().map(|entry| {
+                eprintln!("Global {:?} -> {:?}", entry, entry.init_expr());
+                wasm_core::module::Global {
+                    value: eval_init_expr(
+                        entry.init_expr(),
+                        &mut globals
+                    )
+                }
+            }).collect())
+        }).or_else(|| Some(Vec::new())).unwrap();
+        globals.extend(to_extend.into_iter());
+    }
+
+    tables.extend(
+        module.table_section().and_then(|ts| {
+            Some(ts.entries().iter().map(|entry| {
+                let limits: &elements::ResizableLimits = entry.limits();
+                let (min, max) = (limits.initial(), limits.maximum());
+
+                // Hard limit.
+                if min > 1048576 {
+                    panic!("Hard limit for table size (min) exceeded");
+                }
+
+                let elements: Vec<Option<u32>> = vec! [ None; min as usize ];
+                wasm_core::module::Table {
+                    min: min,
+                    max: max,
+                    elements: elements
+                }
+            }).collect())
+        }).or_else(|| Some(Vec::new())).unwrap().into_iter()
+    );
 
     let code_section: &elements::CodeSection = module.code_section().unwrap();
     let function_section: &elements::FunctionSection = module.function_section().unwrap();
@@ -439,7 +555,7 @@ pub fn translate_module(code: &[u8]) -> Vec<u8> {
     let mut data_segs: Vec<wasm_core::module::DataSegment> = Vec::new();
     if let Some(ds) = module.data_section() {
         for seg in ds.entries() {
-            let offset = eval_init_expr(seg.offset()).get_i32().unwrap() as u32;
+            let offset = eval_init_expr(seg.offset(), &mut globals).get_i32().unwrap() as u32;
             //eprintln!("Offset resolved: {} {:?}", offset, seg.value());
             data_segs.push(wasm_core::module::DataSegment {
                 offset: offset,
@@ -448,6 +564,17 @@ pub fn translate_module(code: &[u8]) -> Vec<u8> {
         }
     } else {
         eprintln!("Warning: Data section not found");
+    }
+
+    if emscripten_patch {
+        eprintln!("Writing DYNAMICTOP_PTR");
+        let mem_end = unsafe {
+            ::std::mem::transmute::<i32, [u8; 4]>(524288)
+        };
+        data_segs.push(wasm_core::module::DataSegment {
+            offset: 16,
+            data: mem_end.to_vec()
+        });
     }
 
     let mut export_map: BTreeMap<String, wasm_core::module::Export> = BTreeMap::new();
@@ -475,29 +602,9 @@ pub fn translate_module(code: &[u8]) -> Vec<u8> {
         eprintln!("Warning: Export section not found");
     }
 
-    let mut tables: Vec<wasm_core::module::Table> =
-        module.table_section().and_then(|ts| {
-            Some(ts.entries().iter().map(|entry| {
-                let limits: &elements::ResizableLimits = entry.limits();
-                let (min, max) = (limits.initial(), limits.maximum());
-
-                // Hard limit.
-                if min > 1048576 {
-                    panic!("Hard limit for table size (min) exceeded");
-                }
-
-                let elements: Vec<Option<u32>> = vec! [ None; min as usize ];
-                wasm_core::module::Table {
-                    min: min,
-                    max: max,
-                    elements: elements
-                }
-            }).collect())
-        }).or_else(|| Some(Vec::new())).unwrap();
-
     if let Some(elems) = module.elements_section() {
         for entry in elems.entries() {
-            let offset = eval_init_expr(entry.offset()).get_i32().unwrap() as u32 as usize;
+            let offset = eval_init_expr(entry.offset(), &mut globals).get_i32().unwrap() as u32 as usize;
             let members = entry.members();
             let end = offset + members.len();
             let tt = &mut tables[entry.index() as usize];
@@ -528,14 +635,6 @@ pub fn translate_module(code: &[u8]) -> Vec<u8> {
         eprintln!("Warning: Elements section not found");
     }
 
-    let globals: Vec<wasm_core::module::Global> = module.global_section().and_then(|gs| {
-        Some(gs.entries().iter().map(|entry| {
-            wasm_core::module::Global {
-                value: eval_init_expr(entry.init_expr())
-            }
-        }).collect())
-    }).or_else(|| Some(Vec::new())).unwrap();
-
     let target_module = wasm_core::module::Module {
         types: types,
         functions: functions,
@@ -548,4 +647,17 @@ pub fn translate_module(code: &[u8]) -> Vec<u8> {
     let serialized = target_module.std_serialize().unwrap();
 
     serialized
+}
+
+fn try_patch_emscripten_global(field_name: &str) -> Option<wasm_core::value::Value> {
+    use self::wasm_core::value::Value;
+
+    match field_name {
+        "memoryBase" => Some(Value::I32(0)),
+        "tableBase" => Some(Value::I32(0)),
+        "DYNAMICTOP_PTR" => Some(Value::I32(16)), // needs mem init
+        "tempDoublePtr" => Some(Value::I32(0)),
+        "STACK_MAX" => Some(Value::I32(65536)),
+        _ => None
+    }
 }

@@ -5,6 +5,7 @@ use opcode::Opcode;
 use int_ops;
 use value::Value;
 use prelude;
+use fp_ops;
 
 const PAGE_SIZE: usize = 65536;
 
@@ -26,7 +27,8 @@ pub enum ExecuteError {
     ValueTypeMismatch,
     UndefinedTableEntry,
     FunctionNotFound,
-    InvalidMemoryOperation
+    InvalidMemoryOperation,
+    FloatingPointException
 }
 
 impl prelude::fmt::Display for ExecuteError {
@@ -1057,6 +1059,12 @@ impl<'a> VirtualMachine<'a> {
                     return Err(ExecuteError::Custom(
                         format!("Not implemented: {}", s)
                     ))
+                },
+                Opcode::F32Const(v) => {
+                    frame.push_operand(Value::F32(fp_ops::i32_reinterpret_f32(v as i32)));
+                },
+                Opcode::F64Const(v) => {
+                    frame.push_operand(Value::F64(fp_ops::i64_reinterpret_f64(v as i64)));
                 },
                 //_ => return Err(ExecuteError::NotImplemented)
             }

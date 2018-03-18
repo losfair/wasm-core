@@ -77,17 +77,17 @@ pub fn i32_xor(a: i32, b: i32) -> Value {
 
 #[inline]
 pub fn i32_shl(a: i32, b: i32) -> Value {
-    Value::I32(a << b)
+    Value::I32(a.wrapping_shl((b as u32) & 31))
 }
 
 #[inline]
 pub fn i32_shr_u(a: i32, b: i32) -> Value {
-    Value::I32(((a as u32).wrapping_shr(b as u32)) as i32)
+    Value::I32(((a as u32).wrapping_shr((b as u32) & 31)) as i32)
 }
 
 #[inline]
 pub fn i32_shr_s(a: i32, b: i32) -> Value {
-    Value::I32(a >> b)
+    Value::I32(a.wrapping_shr((b as u32) & 31))
 }
 
 #[inline]

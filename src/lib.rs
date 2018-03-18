@@ -35,3 +35,4 @@ pub mod module;
 pub mod int_ops;
 pub mod value;
 pub mod resolver;
+pub mod fp_ops;

@@ -9,6 +9,7 @@ use std::io::Write;
 use translator::wasm_core::value::Value;
 use translator::wasm_core::module::Module;
 use translator::wasm_core::executor::{VirtualMachine, RuntimeConfig, NativeResolver, NativeEntry, ExecuteError};
+use translator::wasm_core::resolver::EmscriptenResolver;
 
 struct DefaultResolver {
 
@@ -64,7 +65,7 @@ fn main() {
         let mut vm: VirtualMachine = VirtualMachine::new(&module, RuntimeConfig {
             mem_default_size_pages: 128,
             mem_max_size_pages: Some(256),
-            resolver: Box::new(DefaultResolver {})
+            resolver: Box::new(EmscriptenResolver::new(DefaultResolver {}))
         }).unwrap();
 
         let entry = vm.lookup_exported_func(entry.as_str()).unwrap();
