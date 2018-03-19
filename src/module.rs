@@ -13,7 +13,8 @@ pub struct Module {
     pub exports: BTreeMap<String, Export>,
     pub tables: Vec<Table>,
     pub globals: Vec<Global>,
-    pub natives: Vec<Native>
+    pub natives: Vec<Native>,
+    pub start_function: Option<u32>
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

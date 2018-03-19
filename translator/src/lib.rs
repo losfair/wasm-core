@@ -48,7 +48,8 @@ pub fn eval_init_expr(
         exports: BTreeMap::new(),
         tables: Vec::new(),
         globals: globals.clone(),
-        natives: Vec::new()
+        natives: Vec::new(),
+        start_function: None
     };
     let val = module.execute(RuntimeConfig {
         mem_default_size_pages: 1,
@@ -60,7 +61,10 @@ pub fn eval_init_expr(
 
 
 
-pub fn translate_module(code: &[u8], config: ModuleConfig) -> Vec<u8> {
+pub fn translate_module_raw(
+    code: &[u8],
+    config: ModuleConfig
+) -> wasm_core::module::Module {
     let mut module: elements::Module = parity_wasm::deserialize_buffer(code).unwrap();
     module = match module.parse_names() {
         Ok(v) => v,
@@ -289,6 +293,8 @@ pub fn translate_module(code: &[u8], config: ModuleConfig) -> Vec<u8> {
         }
     }));
 
+    let start_func_id = module.start_section();
+
     for sec in module.sections() {
         let ns = if let elements::Section::Name(ref ns) = *sec {
             ns
@@ -362,6 +368,8 @@ pub fn translate_module(code: &[u8], config: ModuleConfig) -> Vec<u8> {
         eprintln!("Warning: Elements section not found");
     }
 
+    eprintln!("Start: {:?}", start_func_id);
+
     let target_module = wasm_core::module::Module {
         types: types,
         functions: functions,
@@ -369,10 +377,19 @@ pub fn translate_module(code: &[u8], config: ModuleConfig) -> Vec<u8> {
         exports: export_map,
         tables: tables,
         globals: globals,
-        natives: natives
+        natives: natives,
+        start_function: start_func_id
     };
-    let serialized = target_module.std_serialize().unwrap();
 
+    target_module
+}
+
+pub fn translate_module(
+    code: &[u8],
+    config: ModuleConfig
+) -> Vec<u8> {
+    let serialized = translate_module_raw(code, config)
+        .std_serialize().unwrap();
     serialized
 }
 
@@ -398,17 +415,21 @@ fn try_patch_emscripten_func_import(
     use self::wasm_core::module::{Function, FunctionBody};
     use self::wasm_core::opcode::Opcode;
 
-    match field_name {
-        "invoke_i" => Some(gen_invoke_n_to_dyncall_n("i", typeidx, ty, export_map)),
-        "invoke_ii" => Some(gen_invoke_n_to_dyncall_n("ii", typeidx, ty, export_map)),
-        "invoke_iiii" => Some(gen_invoke_n_to_dyncall_n("iiii", typeidx, ty, export_map)),
-        "invoke_v" => Some(gen_invoke_n_to_dyncall_n("v", typeidx, ty, export_map)),
-        "invoke_vi" => Some(gen_invoke_n_to_dyncall_n("vi", typeidx, ty, export_map)),
-        "invoke_vii" => Some(gen_invoke_n_to_dyncall_n("vii", typeidx, ty, export_map)),
-        "invoke_viiii" => Some(gen_invoke_n_to_dyncall_n("viiii", typeidx, ty, export_map)),
-        "invoke_viiiii" => Some(gen_invoke_n_to_dyncall_n("viiiii", typeidx, ty, export_map)),
-        "invoke_viiiiii" => Some(gen_invoke_n_to_dyncall_n("viiiiii", typeidx, ty, export_map)),
+    if field_name.starts_with("invoke_") {
+        let parts: Vec<&str> = field_name.split("_").collect();
+        if parts.len() == 2 {
+            return Some(
+                gen_invoke_n_to_dyncall_n(
+                    parts[1],
+                    typeidx,
+                    ty,
+                    export_map
+                )
+            );
+        }
+    }
 
+    match field_name {
         "_emscripten_memcpy_big" => Some(
             Function {
                 name: Some("_emscripten_memcpy_big".into()),
