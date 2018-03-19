@@ -1,12 +1,18 @@
 pub extern crate wasm_core;
 extern crate parity_wasm;
+extern crate serde;
+#[macro_use]
+extern crate serde_derive;
+
+pub mod config;
+pub mod optrans;
 
 use std::collections::BTreeMap;
 
 use parity_wasm::elements;
-use wasm_core::opcode::Memarg;
 use wasm_core::executor::RuntimeConfig;
 use wasm_core::resolver::NullResolver;
+use config::ModuleConfig;
 
 pub fn translate_value_type(v: &elements::ValueType) -> wasm_core::module::ValType {
     match *v {
@@ -17,91 +23,11 @@ pub fn translate_value_type(v: &elements::ValueType) -> wasm_core::module::ValTy
     }
 }
 
-struct Continuation {
-    opcode_index: usize,
-    brtable_index: Option<usize>
-}
-
-impl Continuation {
-    fn with_opcode_index(index: usize) -> Continuation {
-        Continuation {
-            opcode_index: index,
-            brtable_index: None
-        }
-    }
-
-    fn brtable(index: usize, brt_index: usize) -> Continuation {
-        Continuation {
-            opcode_index: index,
-            brtable_index: Some(brt_index)
-        }
-    }
-
-    fn write(&self, target: usize, opcodes: &mut [wasm_core::opcode::Opcode]) {
-        use self::wasm_core::opcode::Opcode;
-
-        let op_index = self.opcode_index;
-
-        let new_op = match ::std::mem::replace(
-            &mut opcodes[op_index],
-            Opcode::Unreachable
-        ) {
-            Opcode::Jmp(_) => Opcode::Jmp(target as u32),
-            Opcode::JmpIf(_) => Opcode::JmpIf(target as u32),
-            Opcode::JmpTable(mut table, otherwise) => {
-                let table_index = self.brtable_index.unwrap();
-                if table_index < table.len() {
-                    table[table_index] = target as u32;
-                    Opcode::JmpTable(table, otherwise)
-                } else if table_index == table.len() {
-                    Opcode::JmpTable(table, target as u32)
-                } else {
-                    panic!("Table index out of bound");
-                }
-            },
-            _ => panic!("Expecting Jmp*")
-        };
-        opcodes[op_index] = new_op;
-    }
-}
-
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-enum LabelType {
-    Block,
-    Loop(usize), // begin
-    If(usize), // branch-if-false instr
-    Else
-}
-
-struct Label {
-    continuations: Vec<Continuation>,
-    ty: LabelType
-}
-
-impl Label {
-    fn new(ty: LabelType) -> Label {
-        Label {
-            continuations: Vec::new(),
-            ty: ty
-        }
-    }
-
-    fn terminate(&self, opcodes: &mut [wasm_core::opcode::Opcode]) {
-        let target = match self.ty {
-            LabelType::Block | LabelType::If(_) | LabelType::Else => opcodes.len(),
-            LabelType::Loop(begin) => begin
-        };
-        for cont in &self.continuations {
-            cont.write(target, opcodes);
-        }
-    }
-}
-
 pub fn eval_init_expr(
     expr: &elements::InitExpr,
     globals: &mut Vec<wasm_core::module::Global>
 ) -> wasm_core::value::Value {
-    let mut code = translate_opcodes(expr.code());
+    let mut code = optrans::translate_opcodes(expr.code());
     code.push(wasm_core::opcode::Opcode::Return);
 
     let module = wasm_core::module::Module {
@@ -132,236 +58,9 @@ pub fn eval_init_expr(
     val
 }
 
-pub fn translate_opcodes(ops: &[elements::Opcode]) -> Vec<wasm_core::opcode::Opcode> {
-    use self::elements::Opcode as PwOp;
-    use self::wasm_core::opcode::Opcode as WcOp;
 
-    let mut result: Vec<wasm_core::opcode::Opcode> = Vec::new();
-    let mut labels: Vec<Label> = Vec::new();
-    let mut expecting_seq_end = false;
 
-    //eprintln!("{:?}", ops);
-
-    for op in ops {
-        if expecting_seq_end {
-            panic!("Expecting end of opcode sequence");
-        }
-        match *op {
-            PwOp::Drop => result.push(WcOp::Drop),
-            PwOp::Select => result.push(WcOp::Select),
-
-            PwOp::GetLocal(id) => result.push(WcOp::GetLocal(id)),
-            PwOp::SetLocal(id) => result.push(WcOp::SetLocal(id)),
-            PwOp::TeeLocal(id) => result.push(WcOp::TeeLocal(id)),
-            PwOp::GetGlobal(id) => result.push(WcOp::GetGlobal(id)),
-            PwOp::SetGlobal(id) => result.push(WcOp::SetGlobal(id)),
-
-            PwOp::CurrentMemory(_) => result.push(WcOp::CurrentMemory),
-            PwOp::GrowMemory(_) => result.push(WcOp::GrowMemory),
-
-            PwOp::Nop => result.push(WcOp::Nop),
-            PwOp::Unreachable => result.push(WcOp::Unreachable),
-            PwOp::Return => result.push(WcOp::Return),
-            PwOp::Call(id) => result.push(WcOp::Call(id)),
-            PwOp::CallIndirect(id, _) => result.push(WcOp::CallIndirect(id)),
-
-            PwOp::I32Const(v) => result.push(WcOp::I32Const(v)),
-            
-            PwOp::I32Clz => result.push(WcOp::I32Clz),
-            PwOp::I32Ctz => result.push(WcOp::I32Ctz),
-            PwOp::I32Popcnt => result.push(WcOp::I32Popcnt),
-
-            PwOp::I32Add => result.push(WcOp::I32Add),
-            PwOp::I32Sub => result.push(WcOp::I32Sub),
-            PwOp::I32Mul => result.push(WcOp::I32Mul),
-            PwOp::I32DivU => result.push(WcOp::I32DivU),
-            PwOp::I32DivS => result.push(WcOp::I32DivS),
-            PwOp::I32RemU => result.push(WcOp::I32RemU),
-            PwOp::I32RemS => result.push(WcOp::I32RemS),
-            PwOp::I32And => result.push(WcOp::I32And),
-            PwOp::I32Or => result.push(WcOp::I32Or),
-            PwOp::I32Xor => result.push(WcOp::I32Xor),
-            PwOp::I32Shl => result.push(WcOp::I32Shl),
-            PwOp::I32ShrU => result.push(WcOp::I32ShrU),
-            PwOp::I32ShrS => result.push(WcOp::I32ShrS),
-            PwOp::I32Rotl => result.push(WcOp::I32Rotl),
-            PwOp::I32Rotr => result.push(WcOp::I32Rotr),
-
-            PwOp::I32Eqz => result.push(WcOp::I32Eqz),
-
-            PwOp::I32Eq => result.push(WcOp::I32Eq),
-            PwOp::I32Ne => result.push(WcOp::I32Ne),
-            PwOp::I32LtU => result.push(WcOp::I32LtU),
-            PwOp::I32LtS => result.push(WcOp::I32LtS),
-            PwOp::I32LeU => result.push(WcOp::I32LeU),
-            PwOp::I32LeS => result.push(WcOp::I32LeS),
-            PwOp::I32GtU => result.push(WcOp::I32GtU),
-            PwOp::I32GtS => result.push(WcOp::I32GtS),
-            PwOp::I32GeU => result.push(WcOp::I32GeU),
-            PwOp::I32GeS => result.push(WcOp::I32GeS),
-
-            PwOp::I32WrapI64 => result.push(WcOp::I32WrapI64),
-
-            PwOp::I32Load(align, offset) => result.push(WcOp::I32Load(Memarg { offset: offset, align: align })),
-            PwOp::I32Store(align, offset) => result.push(WcOp::I32Store(Memarg { offset: offset, align: align })),
-            PwOp::I32Load8U(align, offset) => result.push(WcOp::I32Load8U(Memarg { offset: offset, align: align })),
-            PwOp::I32Load8S(align, offset) => result.push(WcOp::I32Load8S(Memarg { offset: offset, align: align })),
-            PwOp::I32Load16U(align, offset) => result.push(WcOp::I32Load16U(Memarg { offset: offset, align: align })),
-            PwOp::I32Load16S(align, offset) => result.push(WcOp::I32Load16S(Memarg { offset: offset, align: align })),
-            PwOp::I32Store8(align, offset) => result.push(WcOp::I32Store8(Memarg { offset: offset, align: align })),
-            PwOp::I32Store16(align, offset) => result.push(WcOp::I32Store16(Memarg { offset: offset, align: align })),
-
-            PwOp::I64Const(v) => result.push(WcOp::I64Const(v)),
-            
-            PwOp::I64Clz => result.push(WcOp::I64Clz),
-            PwOp::I64Ctz => result.push(WcOp::I64Ctz),
-            PwOp::I64Popcnt => result.push(WcOp::I64Popcnt),
-
-            PwOp::I64Add => result.push(WcOp::I64Add),
-            PwOp::I64Sub => result.push(WcOp::I64Sub),
-            PwOp::I64Mul => result.push(WcOp::I64Mul),
-            PwOp::I64DivU => result.push(WcOp::I64DivU),
-            PwOp::I64DivS => result.push(WcOp::I64DivS),
-            PwOp::I64RemU => result.push(WcOp::I64RemU),
-            PwOp::I64RemS => result.push(WcOp::I64RemS),
-            PwOp::I64And => result.push(WcOp::I64And),
-            PwOp::I64Or => result.push(WcOp::I64Or),
-            PwOp::I64Xor => result.push(WcOp::I64Xor),
-            PwOp::I64Shl => result.push(WcOp::I64Shl),
-            PwOp::I64ShrU => result.push(WcOp::I64ShrU),
-            PwOp::I64ShrS => result.push(WcOp::I64ShrS),
-            PwOp::I64Rotl => result.push(WcOp::I64Rotl),
-            PwOp::I64Rotr => result.push(WcOp::I64Rotr),
-
-            PwOp::I64Eqz => result.push(WcOp::I64Eqz),
-
-            PwOp::I64Eq => result.push(WcOp::I64Eq),
-            PwOp::I64Ne => result.push(WcOp::I64Ne),
-            PwOp::I64LtU => result.push(WcOp::I64LtU),
-            PwOp::I64LtS => result.push(WcOp::I64LtS),
-            PwOp::I64LeU => result.push(WcOp::I64LeU),
-            PwOp::I64LeS => result.push(WcOp::I64LeS),
-            PwOp::I64GtU => result.push(WcOp::I64GtU),
-            PwOp::I64GtS => result.push(WcOp::I64GtS),
-            PwOp::I64GeU => result.push(WcOp::I64GeU),
-            PwOp::I64GeS => result.push(WcOp::I64GeS),
-
-            PwOp::I64ExtendUI32 => result.push(WcOp::I64ExtendI32U),
-            PwOp::I64ExtendSI32 => result.push(WcOp::I64ExtendI32S),
-
-            PwOp::I64Load(align, offset) => result.push(WcOp::I64Load(Memarg { offset: offset, align: align })),
-            PwOp::I64Store(align, offset) => result.push(WcOp::I64Store(Memarg { offset: offset, align: align })),
-            PwOp::I64Load8U(align, offset) => result.push(WcOp::I64Load8U(Memarg { offset: offset, align: align })),
-            PwOp::I64Load8S(align, offset) => result.push(WcOp::I64Load8S(Memarg { offset: offset, align: align })),
-            PwOp::I64Load16U(align, offset) => result.push(WcOp::I64Load16U(Memarg { offset: offset, align: align })),
-            PwOp::I64Load16S(align, offset) => result.push(WcOp::I64Load16S(Memarg { offset: offset, align: align })),
-            PwOp::I64Load32U(align, offset) => result.push(WcOp::I64Load32U(Memarg { offset: offset, align: align })),
-            PwOp::I64Load32S(align, offset) => result.push(WcOp::I64Load32S(Memarg { offset: offset, align: align })),
-            PwOp::I64Store8(align, offset) => result.push(WcOp::I64Store8(Memarg { offset: offset, align: align })),
-            PwOp::I64Store16(align, offset) => result.push(WcOp::I64Store16(Memarg { offset: offset, align: align })),
-            PwOp::I64Store32(align, offset) => result.push(WcOp::I64Store32(Memarg { offset: offset, align: align })),
-
-            PwOp::End => {
-                if let Some(label) = labels.pop() {
-                    if let LabelType::If(instr_id) = label.ty {
-                        let result_len = result.len() as u32;
-                        if let WcOp::Jmp(ref mut t) = result[instr_id] {
-                            *t = result_len;
-                        } else {
-                            panic!("Expecting Jmp");
-                        }
-                    }
-                    // Make emscripten happy
-                    /*
-                    if label.ty == LabelType::If {
-                        panic!("Expecting Else, not End");
-                    }
-                    */
-                    label.terminate(result.as_mut_slice());
-                } else {
-                    expecting_seq_end = true;
-                }
-            },
-            PwOp::If(_) => {
-                let len = result.len();
-                result.push(WcOp::JmpIf((len + 2) as u32));
-
-                let mut new_label = Label::new(LabelType::If(result.len()));
-                result.push(WcOp::Jmp(0xffffffff));
-
-                labels.push(new_label);
-            },
-            PwOp::Else => {
-                let label = labels.pop().expect("Got End outside of a block");
-
-                {
-                    match label.ty {
-                        LabelType::If(instr_id) => {
-                            result.push(WcOp::Jmp(0xffffffff));
-
-                            let result_len = result.len() as u32;
-                            if let WcOp::Jmp(ref mut t) = result[instr_id] {
-                                *t = result_len as u32;
-                            } else {
-                                panic!("Expecting Jmp");
-                            }
-                        },
-                        _ => panic!("Else must follow an If")
-                    }
-                }
-
-                // defer out-branches to else blk
-                let mut new_label = Label::new(LabelType::Else);
-                new_label.continuations = label.continuations;
-                new_label.continuations.push(Continuation::with_opcode_index(result.len() - 1)); // Jmp of the `if` branch
-                labels.push(new_label);
-            },
-            PwOp::Block(_) => {
-                labels.push(Label::new(LabelType::Block));
-            },
-            PwOp::Loop(_) => {
-                labels.push(Label::new(LabelType::Loop(result.len())));
-            },
-            PwOp::Br(lb) => {
-                let target = labels.iter_mut().rev().nth(lb as usize).expect("Branch target out of bound");
-                target.continuations.push(Continuation::with_opcode_index(result.len()));
-                result.push(WcOp::Jmp(0xffffffff));
-            },
-            PwOp::BrIf(lb) => {
-                let target = labels.iter_mut().rev().nth(lb as usize).expect("Branch target out of bound");
-                target.continuations.push(Continuation::with_opcode_index(result.len()));
-                result.push(WcOp::JmpIf(0xffffffff));
-            },
-            PwOp::BrTable(ref targets, otherwise) => {
-                let mut jmp_targets: Vec<u32> = Vec::new();
-
-                for (i, target) in targets.iter().enumerate() {
-                    let label = labels.iter_mut().rev().nth(*target as usize).expect("Branch target out of bound");
-                    label.continuations.push(Continuation::brtable(result.len(), i as usize));
-                    jmp_targets.push(0xffffffff);
-                }
-
-                let label = labels.iter_mut().rev().nth(otherwise as usize).expect("Branch target out of bound");
-                label.continuations.push(Continuation::brtable(result.len(), targets.len()));
-                result.push(WcOp::JmpTable(jmp_targets, 0xffffffff));
-            },
-            PwOp::F32Const(v) => {
-                result.push(WcOp::F32Const(v));
-            },
-            PwOp::F64Const(v) => {
-                result.push(WcOp::F64Const(v));
-            },
-            _ => {
-                eprintln!("Warning: Generating trap for unimplemented opcode: {:?}", op);
-                result.push(WcOp::NotImplemented(format!("{:?}", op)));
-            }
-        }
-    }
-
-    result
-}
-
-pub fn translate_module(code: &[u8]) -> Vec<u8> {
+pub fn translate_module(code: &[u8], config: ModuleConfig) -> Vec<u8> {
     let mut module: elements::Module = parity_wasm::deserialize_buffer(code).unwrap();
     module = match module.parse_names() {
         Ok(v) => v,
@@ -387,7 +86,31 @@ pub fn translate_module(code: &[u8]) -> Vec<u8> {
         Vec::new()
     };
 
-    let mut emscripten_patch: bool = false;
+    let mut export_map: BTreeMap<String, wasm_core::module::Export> = BTreeMap::new();
+    if let Some(exports) = module.export_section() {
+        for entry in exports.entries() {
+            use self::elements::Internal;
+            eprintln!("Export: {} -> {:?}", entry.field(), entry.internal());
+
+            let field: &str = entry.field();
+            let internal: &Internal = entry.internal();
+
+            match *internal {
+                Internal::Function(id) => {
+                    export_map.insert(
+                        field.to_string(),
+                        wasm_core::module::Export::Function(id as u32)
+                    );
+                },
+                _ => {
+                    eprintln!("Warning: Internal type not supported ({:?})", internal);
+                }
+            }
+        }
+    } else {
+        eprintln!("Warning: Export section not found");
+    }
+
     let mut functions: Vec<wasm_core::module::Function> = Vec::new();
     let mut natives: Vec<wasm_core::module::Native> = Vec::new();
     let mut globals: Vec<wasm_core::module::Global> = Vec::new();
@@ -403,41 +126,70 @@ pub fn translate_module(code: &[u8]) -> Vec<u8> {
                     use self::wasm_core::opcode::Opcode;
                     use self::wasm_core::module::Native;
 
-                    let native_id = natives.len();
-                    natives.push(Native {
-                        module: entry.module().to_string(),
-                        field: entry.field().to_string(),
-                        typeidx: typeidx as u32
-                    });
+                    eprintln!("Importing function: {:?} type: {:?}", entry, types[typeidx]);
 
-                    let mut opcodes: Vec<Opcode> = vec! [];
-                    let wasm_core::module::Type::Func(ref ty, _) = types[typeidx];
-
-                    for i in 0..ty.len() {
-                        opcodes.push(Opcode::GetLocal(i as u32));
-                    }
-
-                    opcodes.push(Opcode::NativeInvoke(native_id as u32));
-                    opcodes.push(Opcode::Return);
-
-                    functions.push(wasm_core::module::Function {
-                        name: None,
-                        typeidx: typeidx as u32,
-                        locals: Vec::new(),
-                        body: wasm_core::module::FunctionBody {
-                            opcodes: opcodes
+                    let patched = if config.emscripten.unwrap_or(false) && entry.module() == "env" {
+                        let f: Option<wasm_core::module::Function> = try_patch_emscripten_func_import(
+                            entry.field(),
+                            typeidx,
+                            &types[typeidx],
+                            &export_map
+                        );
+                        if let Some(f) = f {
+                            functions.push(f);
+                            eprintln!("Patch applied");
+                            true
+                        } else {
+                            false
                         }
-                    });
+                    } else {
+                        false
+                    };
+
+                    if !patched {
+                        let native_id = natives.len();
+                        natives.push(Native {
+                            module: entry.module().to_string(),
+                            field: entry.field().to_string(),
+                            typeidx: typeidx as u32
+                        });
+
+                        let mut opcodes: Vec<Opcode> = vec! [];
+                        let wasm_core::module::Type::Func(ref ty, _) = types[typeidx];
+
+                        for i in 0..ty.len() {
+                            opcodes.push(Opcode::GetLocal(i as u32));
+                        }
+
+                        opcodes.push(Opcode::NativeInvoke(native_id as u32));
+                        opcodes.push(Opcode::Return);
+
+                        functions.push(wasm_core::module::Function {
+                            name: None,
+                            typeidx: typeidx as u32,
+                            locals: Vec::new(),
+                            body: wasm_core::module::FunctionBody {
+                                opcodes: opcodes
+                            }
+                        });
+                    }
                 },
                 External::Global(ref gt) => {
-                    let v = try_patch_emscripten_global(entry.field());
-                    if let Some(v) = v {
-                        eprintln!("Global {:?} patched as an Emscripten import", entry);
-                        globals.push(wasm_core::module::Global {
-                            value: v
-                        });
-                        emscripten_patch = true;
+                    let patched = if config.emscripten.unwrap_or(false) {
+                        let v = try_patch_emscripten_global(entry.field());
+                        if let Some(v) = v {
+                            eprintln!("Global {:?} patched as an Emscripten import", entry);
+                            globals.push(wasm_core::module::Global {
+                                value: v
+                            });
+                            true
+                        } else {
+                            false
+                        }
                     } else {
+                        false
+                    };
+                    if !patched {
                         eprintln!("Warning: Generating undef for Global import: {:?}", entry);
                         globals.push(wasm_core::module::Global {
                             value: wasm_core::value::Value::default()
@@ -524,7 +276,7 @@ pub fn translate_module(code: &[u8]) -> Vec<u8> {
                 locals.push(t);
             }
         }
-        let mut opcodes = translate_opcodes(bodies[i].code().elements());
+        let mut opcodes = optrans::translate_opcodes(bodies[i].code().elements());
         opcodes.push(wasm_core::opcode::Opcode::Return);
 
         wasm_core::module::Function {
@@ -566,7 +318,7 @@ pub fn translate_module(code: &[u8]) -> Vec<u8> {
         eprintln!("Warning: Data section not found");
     }
 
-    if emscripten_patch {
+    if config.emscripten.unwrap_or(false) {
         eprintln!("Writing DYNAMICTOP_PTR");
         let mem_end = unsafe {
             ::std::mem::transmute::<i32, [u8; 4]>(524288)
@@ -575,31 +327,6 @@ pub fn translate_module(code: &[u8]) -> Vec<u8> {
             offset: 16,
             data: mem_end.to_vec()
         });
-    }
-
-    let mut export_map: BTreeMap<String, wasm_core::module::Export> = BTreeMap::new();
-    if let Some(exports) = module.export_section() {
-        for entry in exports.entries() {
-            use self::elements::Internal;
-            eprintln!("Export: {} -> {:?}", entry.field(), entry.internal());
-
-            let field: &str = entry.field();
-            let internal: &Internal = entry.internal();
-
-            match *internal {
-                Internal::Function(id) => {
-                    export_map.insert(
-                        field.to_string(),
-                        wasm_core::module::Export::Function(id as u32)
-                    );
-                },
-                _ => {
-                    eprintln!("Warning: Import type not supported ({:?})", internal);
-                }
-            }
-        }
-    } else {
-        eprintln!("Warning: Export section not found");
     }
 
     if let Some(elems) = module.elements_section() {
@@ -659,5 +386,80 @@ fn try_patch_emscripten_global(field_name: &str) -> Option<wasm_core::value::Val
         "tempDoublePtr" => Some(Value::I32(0)),
         "STACK_MAX" => Some(Value::I32(65536)),
         _ => None
+    }
+}
+
+fn try_patch_emscripten_func_import(
+    field_name: &str,
+    typeidx: usize,
+    ty: &wasm_core::module::Type,
+    export_map: &BTreeMap<String, wasm_core::module::Export>
+) -> Option<wasm_core::module::Function> {
+    use self::wasm_core::module::{Function, FunctionBody};
+    use self::wasm_core::opcode::Opcode;
+
+    match field_name {
+        "invoke_i" => Some(gen_invoke_n_to_dyncall_n("i", typeidx, ty, export_map)),
+        "invoke_ii" => Some(gen_invoke_n_to_dyncall_n("ii", typeidx, ty, export_map)),
+        "invoke_iiii" => Some(gen_invoke_n_to_dyncall_n("iiii", typeidx, ty, export_map)),
+        "invoke_v" => Some(gen_invoke_n_to_dyncall_n("v", typeidx, ty, export_map)),
+        "invoke_vi" => Some(gen_invoke_n_to_dyncall_n("vi", typeidx, ty, export_map)),
+        "invoke_vii" => Some(gen_invoke_n_to_dyncall_n("vii", typeidx, ty, export_map)),
+        "invoke_viiii" => Some(gen_invoke_n_to_dyncall_n("viiii", typeidx, ty, export_map)),
+        "invoke_viiiii" => Some(gen_invoke_n_to_dyncall_n("viiiii", typeidx, ty, export_map)),
+        "invoke_viiiiii" => Some(gen_invoke_n_to_dyncall_n("viiiiii", typeidx, ty, export_map)),
+
+        "_emscripten_memcpy_big" => Some(
+            Function {
+                name: Some("_emscripten_memcpy_big".into()),
+                typeidx: typeidx as u32,
+                locals: Vec::new(),
+                body: FunctionBody {
+                    opcodes: vec! [
+                        Opcode::GetLocal(0), // dest
+                        Opcode::GetLocal(1), // src
+                        Opcode::GetLocal(2), // n_bytes
+                        Opcode::Memcpy,
+                        Opcode::GetLocal(0),
+                        Opcode::Return
+                    ]
+                }
+            }
+        ),
+        _ => None
+    }
+}
+
+fn gen_invoke_n_to_dyncall_n(
+    suffix: &str,
+    typeidx: usize,
+    ty: &wasm_core::module::Type,
+    export_map: &BTreeMap<String, wasm_core::module::Export>
+) -> wasm_core::module::Function {
+    use self::wasm_core::module::{Function, FunctionBody, Type, Export};
+    use self::wasm_core::opcode::Opcode;
+
+    let invoke_name = format!("invoke_{}", suffix);
+    let dyncall_name = format!("dynCall_{}", suffix);
+
+    let Export::Function(fn_idx) = *export_map.get(dyncall_name.as_str()).unwrap();
+
+    let mut opcodes: Vec<Opcode> = Vec::new();
+
+    let Type::Func(ref ft_args, ref ft_ret) = *ty;
+
+    for i in 0..ft_args.len() {
+        opcodes.push(Opcode::GetLocal(i as u32));
+    }
+    opcodes.push(Opcode::Call(fn_idx));
+    opcodes.push(Opcode::Return);
+
+    Function {
+        name: Some(invoke_name.clone()),
+        typeidx: typeidx as u32,
+        locals: Vec::new(),
+        body: FunctionBody {
+            opcodes: opcodes
+        }
     }
 }

@@ -10,6 +10,7 @@ use translator::wasm_core::value::Value;
 use translator::wasm_core::module::Module;
 use translator::wasm_core::executor::{VirtualMachine, RuntimeConfig, NativeResolver, NativeEntry, ExecuteError};
 use translator::wasm_core::resolver::EmscriptenResolver;
+use translator::config::ModuleConfig;
 
 struct DefaultResolver {
 
@@ -40,12 +41,25 @@ fn main() {
     args.next().unwrap();
 
     let mode: String = args.next().expect("Mode required");
-    let mut f = File::open(args.next().expect("Path required")).unwrap();
+
+    let path = args.next().expect("Path required");
+    let mut f = File::open(&path).unwrap();
     let mut code: Vec<u8> = Vec::new();
+
+    let cfg: ModuleConfig = match File::open(
+        format!("{}.wtrans.json", path)
+    ) {
+        Ok(mut f) => {
+            let mut content: String = String::new();
+            f.read_to_string(&mut content).unwrap();
+            serde_json::from_str(content.as_str()).unwrap()
+        },
+        Err(_) => ModuleConfig::default()
+    };
 
     f.read_to_end(&mut code).unwrap();
 
-    let serialized = translator::translate_module(code.as_slice());
+    let serialized = translator::translate_module(code.as_slice(), cfg);
 
     if mode == "build" {
         ::std::io::stdout().write(serialized.as_slice()).unwrap();
@@ -68,6 +82,8 @@ fn main() {
             resolver: Box::new(EmscriptenResolver::new(DefaultResolver {}))
         }).unwrap();
 
+        vm.set_debug_print_hook(debug_print);
+
         let entry = vm.lookup_exported_func(entry.as_str()).unwrap();
         eprintln!("{:?}", module.functions[entry]);
 
@@ -87,4 +103,8 @@ fn main() {
     } else {
         eprintln!("Unrecognized mode: {}", mode);
     }
+}
+
+fn debug_print(s: &str) {
+    eprintln!("{}", s);
 }

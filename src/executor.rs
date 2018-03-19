@@ -27,8 +27,10 @@ pub enum ExecuteError {
     ValueTypeMismatch,
     UndefinedTableEntry,
     FunctionNotFound,
+    ExportEntryNotFound,
     InvalidMemoryOperation,
-    FloatingPointException
+    FloatingPointException,
+    IndirectCallTypeMismatch(usize, Type, Type) // (fn_id, expected, actual)
 }
 
 impl prelude::fmt::Display for ExecuteError {
@@ -518,8 +520,11 @@ impl<'a> VirtualMachine<'a> {
                         return Err(ExecuteError::TypeIdxIndexOufOfBound);
                     }
                     if self.module.types[actual_typeidx] != *ft_expect {
-                        //panic!("Expected {:?}, got {:?}", self.module.types[actual_typeidx], ft_expect);
-                        return Err(ExecuteError::TypeMismatch);
+                        return Err(ExecuteError::IndirectCallTypeMismatch(
+                            elem as usize,
+                            ft_expect.clone(),
+                            self.module.types[actual_typeidx].clone()
+                        ));
                     }
 
                     frame.ip = Some(ip);
@@ -1059,6 +1064,25 @@ impl<'a> VirtualMachine<'a> {
                     return Err(ExecuteError::Custom(
                         format!("Not implemented: {}", s)
                     ))
+                },
+                Opcode::Memcpy => {
+                    // Pop in reverse order.
+                    // (dest, src, n_bytes)
+                    let n_bytes = frame.pop_operand()?.get_i32()? as usize;
+                    let src = frame.pop_operand()?.get_i32()? as usize;
+                    let dest = frame.pop_operand()?.get_i32()? as usize;
+                    let mem = self.rt.mem.data.as_mut_slice();
+
+                    if dest + n_bytes >= mem.len() {
+                        return Err(ExecuteError::AddrOutOfBound(dest as u32, n_bytes as u32));
+                    }
+                    if src + n_bytes >= mem.len() {
+                        return Err(ExecuteError::AddrOutOfBound(src as u32, n_bytes as u32));
+                    }
+
+                    for i in 0..n_bytes {
+                        mem[dest + i] = mem[src + i]; // copy_from_slice ?
+                    }
                 },
                 Opcode::F32Const(v) => {
                     frame.push_operand(Value::F32(fp_ops::i32_reinterpret_f32(v as i32)));

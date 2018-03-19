@@ -1,4 +1,5 @@
 use executor::{NativeResolver, NativeEntry, ExecuteError};
+use value::Value;
 
 pub struct NullResolver {
 
@@ -38,6 +39,11 @@ impl<I: NativeResolver> NativeResolver for EmscriptenResolver<I> {
             "abortStackOverflow" => {
                 Some(Box::new(|_, _| {
                     Err(ExecuteError::Custom("Emscripten stack overflow".into()))
+                }))
+            },
+            "getTotalMemory" => {
+                Some(Box::new(|rt, _| {
+                    Ok(Some(Value::I32(rt.get_memory().len() as i32)))
                 }))
             },
             _ => self.inner.resolve(module, field)

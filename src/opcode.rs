@@ -134,6 +134,7 @@ pub enum Opcode {
     JmpTable(Vec<u32>, u32),
 
     NativeInvoke(u32),
+    Memcpy, // Pops: (dest, src, n_bytes)
 
     NotImplemented(String)
 }
