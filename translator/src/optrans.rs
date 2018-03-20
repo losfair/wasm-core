@@ -90,7 +90,7 @@ pub fn translate_opcodes(ops: &[elements::Opcode]) -> Vec<wasm_core::opcode::Opc
     let mut labels: Vec<Label> = Vec::new();
     let mut expecting_seq_end = false;
 
-    //eprintln!("{:?}", ops);
+    //dprintln!("{:?}", ops);
 
     for op in ops {
         if expecting_seq_end {
@@ -302,7 +302,7 @@ pub fn translate_opcodes(ops: &[elements::Opcode]) -> Vec<wasm_core::opcode::Opc
                 result.push(WcOp::F64Const(v));
             },
             _ => {
-                eprintln!("Warning: Generating trap for unimplemented opcode: {:?}", op);
+                dprintln!("Warning: Generating trap for unimplemented opcode: {:?}", op);
                 result.push(WcOp::NotImplemented(format!("{:?}", op)));
             }
         }

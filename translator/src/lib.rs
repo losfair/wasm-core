@@ -4,6 +4,9 @@ extern crate serde;
 #[macro_use]
 extern crate serde_derive;
 
+#[macro_use]
+mod debug_print;
+
 pub mod config;
 pub mod optrans;
 
@@ -69,7 +72,7 @@ pub fn translate_module_raw(
     module = match module.parse_names() {
         Ok(v) => v,
         Err((_, m)) => {
-            eprintln!("Warning: Failed to parse names");
+            dprintln!("Warning: Failed to parse names");
             m
         }
     };
@@ -94,7 +97,7 @@ pub fn translate_module_raw(
     if let Some(exports) = module.export_section() {
         for entry in exports.entries() {
             use self::elements::Internal;
-            eprintln!("Export: {} -> {:?}", entry.field(), entry.internal());
+            dprintln!("Export: {} -> {:?}", entry.field(), entry.internal());
 
             let field: &str = entry.field();
             let internal: &Internal = entry.internal();
@@ -107,12 +110,12 @@ pub fn translate_module_raw(
                     );
                 },
                 _ => {
-                    eprintln!("Warning: Internal type not supported ({:?})", internal);
+                    dprintln!("Warning: Internal type not supported ({:?})", internal);
                 }
             }
         }
     } else {
-        eprintln!("Warning: Export section not found");
+        dprintln!("Warning: Export section not found");
     }
 
     let mut functions: Vec<wasm_core::module::Function> = Vec::new();
@@ -130,7 +133,7 @@ pub fn translate_module_raw(
                     use self::wasm_core::opcode::Opcode;
                     use self::wasm_core::module::Native;
 
-                    eprintln!("Importing function: {:?} type: {:?}", entry, types[typeidx]);
+                    dprintln!("Importing function: {:?} type: {:?}", entry, types[typeidx]);
 
                     let patched = if config.emscripten.unwrap_or(false) && entry.module() == "env" {
                         let f: Option<wasm_core::module::Function> = try_patch_emscripten_func_import(
@@ -141,7 +144,7 @@ pub fn translate_module_raw(
                         );
                         if let Some(f) = f {
                             functions.push(f);
-                            eprintln!("Patch applied");
+                            dprintln!("Patch applied");
                             true
                         } else {
                             false
@@ -182,7 +185,7 @@ pub fn translate_module_raw(
                     let patched = if config.emscripten.unwrap_or(false) {
                         let v = try_patch_emscripten_global(entry.field());
                         if let Some(v) = v {
-                            eprintln!("Global {:?} patched as an Emscripten import", entry);
+                            dprintln!("Global {:?} patched as an Emscripten import", entry);
                             globals.push(wasm_core::module::Global {
                                 value: v
                             });
@@ -194,14 +197,14 @@ pub fn translate_module_raw(
                         false
                     };
                     if !patched {
-                        eprintln!("Warning: Generating undef for Global import: {:?}", entry);
+                        dprintln!("Warning: Generating undef for Global import: {:?}", entry);
                         globals.push(wasm_core::module::Global {
                             value: wasm_core::value::Value::default()
                         });
                     }
                 },
                 External::Table(ref tt) => {
-                    eprintln!("Warning: Generating undef for Table import: {:?}", entry);
+                    dprintln!("Warning: Generating undef for Table import: {:?}", entry);
                     let limits: &elements::ResizableLimits = tt.limits();
                     let (min, max) = (limits.initial(), limits.maximum());
 
@@ -218,7 +221,7 @@ pub fn translate_module_raw(
                     });
                 },
                 _ => {
-                    eprintln!("Warning: Import ignored: {:?}", entry);
+                    dprintln!("Warning: Import ignored: {:?}", entry);
                     continue;
                 }
             }
@@ -229,7 +232,7 @@ pub fn translate_module_raw(
     {
         let to_extend = module.global_section().and_then(|gs| {
             Some(gs.entries().iter().map(|entry| {
-                eprintln!("Global {:?} -> {:?}", entry, entry.init_expr());
+                dprintln!("Global {:?} -> {:?}", entry, entry.init_expr());
                 wasm_core::module::Global {
                     value: eval_init_expr(
                         entry.init_expr(),
@@ -271,7 +274,7 @@ pub fn translate_module_raw(
     assert_eq!(bodies.len(), fdefs.len());
 
     functions.extend((0..bodies.len()).map(|i| {
-        //eprintln!("Function {}: {:?} {:?}", i, fdefs[i], bodies[i]);
+        //dprintln!("Function {}: {:?} {:?}", i, fdefs[i], bodies[i]);
         let typeidx = fdefs[i].type_ref() as usize;
         let mut locals: Vec<wasm_core::module::ValType> = Vec::new();
         for lc in bodies[i].locals() {
@@ -302,7 +305,7 @@ pub fn translate_module_raw(
             continue;
         };
         if let elements::NameSection::Function(ref fns) = *ns {
-            eprintln!("Found function name section");
+            dprintln!("Found function name section");
             for (i, name) in fns.names() {
                 functions[i as usize].name = Some(name.to_string());
             }
@@ -314,18 +317,18 @@ pub fn translate_module_raw(
     if let Some(ds) = module.data_section() {
         for seg in ds.entries() {
             let offset = eval_init_expr(seg.offset(), &mut globals).get_i32().unwrap() as u32;
-            //eprintln!("Offset resolved: {} {:?}", offset, seg.value());
+            //dprintln!("Offset resolved: {} {:?}", offset, seg.value());
             data_segs.push(wasm_core::module::DataSegment {
                 offset: offset,
                 data: seg.value().to_vec()
             });
         }
     } else {
-        eprintln!("Warning: Data section not found");
+        dprintln!("Warning: Data section not found");
     }
 
     if config.emscripten.unwrap_or(false) {
-        eprintln!("Writing DYNAMICTOP_PTR");
+        dprintln!("Writing DYNAMICTOP_PTR");
         let mem_end = unsafe {
             ::std::mem::transmute::<i32, [u8; 4]>(524288)
         };
@@ -361,14 +364,14 @@ pub fn translate_module_raw(
                 tt.elements[offset + i] = Some(members[i]);
             }
 
-            eprintln!("Elements written to table: {}, {}", offset, members.len());
+            dprintln!("Elements written to table: {}, {}", offset, members.len());
         }
-        eprintln!("{} elements added to table", elems.entries().len());
+        dprintln!("{} elements added to table", elems.entries().len());
     } else {
-        eprintln!("Warning: Elements section not found");
+        dprintln!("Warning: Elements section not found");
     }
 
-    eprintln!("Start: {:?}", start_func_id);
+    dprintln!("Start: {:?}", start_func_id);
 
     let target_module = wasm_core::module::Module {
         types: types,

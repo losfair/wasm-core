@@ -1,5 +1,5 @@
 [package]
-name = "translator"
+name = "wasm-translator"
 version = "0.1.0"
 authors = ["losfair <zhy20000919@hotmail.com>"]
 
@@ -9,3 +9,6 @@ parity-wasm = "0.27.2"
 serde_json = "1.0"
 serde = "1.0"
 serde_derive = "1.0"
+
+[features]
+debug_print = []

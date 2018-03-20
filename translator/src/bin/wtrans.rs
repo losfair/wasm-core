@@ -1,4 +1,4 @@
-extern crate translator;
+extern crate wasm_translator as translator;
 extern crate serde_json;
 
 use std::fs::File;

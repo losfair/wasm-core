@@ -1,4 +1,4 @@
-extern crate translator;
+extern crate wasm_translator as translator;
 
 use std::fs::File;
 use std::env;
@@ -88,17 +88,16 @@ fn main() {
         Value::I32(call_args.len() as i32),
         Value::I32(argv_addr)
     ]);
-    let result = match result {
-        Ok(v) => v,
+    match result {
+        Ok(_) => {},
         Err(e) => {
             eprintln!("Error: {:?}", e);
             eprintln!("Backtrace:");
             let bt = vm.backtrace();
             eprintln!("{:?}", bt);
             eprintln!("{:?}", vm.last_function());
-            None
         }
-    };
+    }
 }
 
 fn write_main_args_emscripten(vm: &mut VirtualMachine, args: &[String]) -> i32 {
