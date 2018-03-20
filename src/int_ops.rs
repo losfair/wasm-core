@@ -27,37 +27,37 @@ pub fn i32_popcnt(v: i32) -> Value {
 
 #[inline]
 pub fn i32_add(a: i32, b: i32) -> Value {
-    Value::I32(a + b)
+    Value::I32(a.wrapping_add(b))
 }
 
 #[inline]
 pub fn i32_sub(a: i32, b: i32) -> Value {
-    Value::I32(a - b)
+    Value::I32(a.wrapping_sub(b))
 }
 
 #[inline]
 pub fn i32_mul(a: i32, b: i32) -> Value {
-    Value::I32(a * b)
+    Value::I32(a.wrapping_mul(b))
 }
 
 #[inline]
 pub fn i32_div_u(a: i32, b: i32) -> Value {
-    Value::I32(((a as u32) / (b as u32)) as i32)
+    Value::I32((a as u32).wrapping_div(b as u32) as i32)
 }
 
 #[inline]
 pub fn i32_div_s(a: i32, b: i32) -> Value {
-    Value::I32(a / b)
+    Value::I32(a.wrapping_div(b))
 }
 
 #[inline]
 pub fn i32_rem_u(a: i32, b: i32) -> Value {
-    Value::I32(((a as u32) % (b as u32)) as i32)
+    Value::I32((a as u32).wrapping_rem(b as u32) as i32)
 }
 
 #[inline]
 pub fn i32_rem_s(a: i32, b: i32) -> Value {
-    Value::I32(a % b)
+    Value::I32(a.wrapping_rem(b))
 }
 
 #[inline]
@@ -301,37 +301,37 @@ pub fn i64_popcnt(v: i64) -> Value {
 
 #[inline]
 pub fn i64_add(a: i64, b: i64) -> Value {
-    Value::I64(a + b)
+    Value::I64(a.wrapping_add(b))
 }
 
 #[inline]
 pub fn i64_sub(a: i64, b: i64) -> Value {
-    Value::I64(a - b)
+    Value::I64(a.wrapping_sub(b))
 }
 
 #[inline]
 pub fn i64_mul(a: i64, b: i64) -> Value {
-    Value::I64(a * b)
+    Value::I64(a.wrapping_mul(b))
 }
 
 #[inline]
 pub fn i64_div_u(a: i64, b: i64) -> Value {
-    Value::I64(((a as u32) / (b as u32)) as i64)
+    Value::I64((a as u32).wrapping_div(b as u32) as i64)
 }
 
 #[inline]
 pub fn i64_div_s(a: i64, b: i64) -> Value {
-    Value::I64(a / b)
+    Value::I64(a.wrapping_div(b))
 }
 
 #[inline]
 pub fn i64_rem_u(a: i64, b: i64) -> Value {
-    Value::I64(((a as u32) % (b as u32)) as i64)
+    Value::I64((a as u32).wrapping_rem(b as u32) as i64)
 }
 
 #[inline]
 pub fn i64_rem_s(a: i64, b: i64) -> Value {
-    Value::I64(a % b)
+    Value::I64(a.wrapping_rem(b))
 }
 
 #[inline]
@@ -351,7 +351,7 @@ pub fn i64_xor(a: i64, b: i64) -> Value {
 
 #[inline]
 pub fn i64_shl(a: i64, b: i64) -> Value {
-    Value::I64(a << b)
+    Value::I64(a.wrapping_shl(b as u32))
 }
 
 #[inline]
@@ -361,7 +361,7 @@ pub fn i64_shr_u(a: i64, b: i64) -> Value {
 
 #[inline]
 pub fn i64_shr_s(a: i64, b: i64) -> Value {
-    Value::I64(a >> b)
+    Value::I64(a.wrapping_shr(b as u32))
 }
 
 #[inline]
