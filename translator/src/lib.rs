@@ -330,7 +330,7 @@ pub fn translate_module_raw(
     if config.emscripten.unwrap_or(false) {
         dprintln!("Writing DYNAMICTOP_PTR");
         let mem_end = unsafe {
-            ::std::mem::transmute::<i32, [u8; 4]>(524288)
+            ::std::mem::transmute::<i32, [u8; 4]>(8323072)
         };
         data_segs.push(wasm_core::module::DataSegment {
             offset: 16,
@@ -403,8 +403,10 @@ fn try_patch_emscripten_global(field_name: &str) -> Option<wasm_core::value::Val
         "memoryBase" => Some(Value::I32(0)),
         "tableBase" => Some(Value::I32(0)),
         "DYNAMICTOP_PTR" => Some(Value::I32(16)), // needs mem init
-        "tempDoublePtr" => Some(Value::I32(0)),
-        "STACK_MAX" => Some(Value::I32(65536)),
+        "tempDoublePtr" => Some(Value::I32(64)),
+        "STACK_BASE" => Some(Value::I32(4096)),
+        "STACKTOP" => Some(Value::I32(4096)),
+        "STACK_MAX" => Some(Value::I32(4096 + 1048576)),
         _ => None
     }
 }
@@ -445,6 +447,22 @@ fn try_patch_emscripten_func_import(
                         Opcode::GetLocal(2), // n_bytes
                         Opcode::Memcpy,
                         Opcode::GetLocal(0),
+                        Opcode::Return
+                    ]
+                }
+            }
+        ),
+        "enlargeMemory" => Some(
+            Function {
+                name: Some("enlargeMemory".into()),
+                typeidx: typeidx as u32,
+                locals: Vec::new(),
+                body: FunctionBody {
+                    opcodes: vec! [
+                        Opcode::I32Const(1),
+                        Opcode::GrowMemory,
+                        Opcode::Drop,
+                        Opcode::I32Const(1),
                         Opcode::Return
                     ]
                 }
