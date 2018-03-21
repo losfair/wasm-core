@@ -25,6 +25,7 @@ pub enum ExecuteError {
     AddrOutOfBound(u32, u32),
     TypeMismatch,
     ValueTypeMismatch,
+    ReturnTypeMismatch,
     UndefinedTableEntry,
     FunctionNotFound,
     ExportEntryNotFound,
@@ -583,7 +584,7 @@ impl<'a> VirtualMachine<'a> {
 
                     // There should be exactly n_rets operands now.
                     if prev_frame.operands.len() != n_rets {
-                        return Err(ExecuteError::TypeMismatch);
+                        return Err(ExecuteError::ReturnTypeMismatch);
                     }
 
                     if self.frames.len() < initial_stack_depth {
