@@ -29,6 +29,42 @@ impl CFGraph {
             blocks: scan_basic_blocks(fops)
         }
     }
+
+    /// Generate sequential opcodes.
+    pub fn gen_opcodes(&self) -> Vec<Opcode> {
+        enum OpOrBr {
+            Op(Opcode),
+            Br(Branch) // pending branch to basic block
+        }
+
+        let mut seq: Vec<OpOrBr> = Vec::new();
+        let mut begin_instrs: Vec<u32> = Vec::with_capacity(self.blocks.len());
+
+        for (i, bb) in self.blocks.iter().enumerate() {
+            begin_instrs.push(seq.len() as u32);
+            for op in &bb.opcodes {
+                seq.push(OpOrBr::Op(op.clone()));
+            }
+            seq.push(OpOrBr::Br(bb.br.as_ref().unwrap().clone()));
+        }
+
+        seq.into_iter().map(|oob| {
+            match oob {
+                OpOrBr::Op(op) => op,
+                OpOrBr::Br(br) => {
+                    match br {
+                        Branch::Jmp(BlockId(id)) => Opcode::Jmp(begin_instrs[id]),
+                        Branch::JmpIf(BlockId(id)) => Opcode::JmpIf(begin_instrs[id]),
+                        Branch::JmpTable(targets, BlockId(otherwise)) => Opcode::JmpTable(
+                            targets.into_iter().map(|BlockId(id)| begin_instrs[id]).collect(),
+                            begin_instrs[otherwise]
+                        ),
+                        Branch::Return => Opcode::Return
+                    }
+                }
+            }
+        }).collect()
+    }
 }
 
 impl BasicBlock {
@@ -119,10 +155,11 @@ fn scan_basic_blocks(ops: &[Opcode]) -> Vec<BasicBlock> {
                     _ => unreachable!()
                 });
                 current_bb += 1;
-            } else if jmp_targets.contains(&(i as u32)) { // implicit fallthrough
-                bbs[current_bb].br = Some(Branch::Jmp(BlockId(current_bb + 1)));
-                current_bb += 1;
             } else {
+                if jmp_targets.contains(&(i as u32)) { // implicit fallthrough
+                    bbs[current_bb].br = Some(Branch::Jmp(BlockId(current_bb + 1)));
+                    current_bb += 1;
+                }
                 bbs[current_bb].opcodes.push(op.clone());
             }
         }
@@ -156,5 +193,9 @@ mod tests {
         assert_eq!(cfg.blocks[0].br, Some(Branch::Jmp(BlockId(2))));
         assert_eq!(cfg.blocks[1].br, Some(Branch::Jmp(BlockId(2))));
         assert_eq!(cfg.blocks[2].br, Some(Branch::Return));
+
+        eprintln!("{:?}", cfg);
+
+        eprintln!("{:?}", cfg.gen_opcodes());
     }
 }
