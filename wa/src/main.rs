@@ -13,6 +13,8 @@ use translator::wasm_core::value::Value;
 use translator::wasm_core::module::{Module, Export};
 use translator::wasm_core::executor::{VirtualMachine, RuntimeConfig, NativeResolver, NativeEntry, ExecuteError};
 use translator::wasm_core::resolver::EmscriptenResolver;
+use translator::wasm_core::optimizers::RemoveDeadBasicBlocks;
+use translator::wasm_core::cfgraph::CFGraph;
 use translator::config::ModuleConfig;
 
 use syscall::SyscallResolver;
@@ -47,7 +49,14 @@ fn main() {
 
     f.read_to_end(&mut code).unwrap();
 
-    let module = translator::translate_module_raw(code.as_slice(), cfg);
+    let mut module = translator::translate_module_raw(code.as_slice(), cfg);
+    for f in &mut module.functions {
+        let mut cfg = CFGraph::from_function(f.body.opcodes.as_slice()).unwrap();
+        cfg.validate().unwrap();
+        cfg.optimize(RemoveDeadBasicBlocks).unwrap();
+        cfg.validate().unwrap();
+        f.body.opcodes = cfg.gen_opcodes();
+    }
 
     let mut call_args: Vec<String> = Vec::new();
     for arg in args {
