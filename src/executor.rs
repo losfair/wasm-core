@@ -628,6 +628,14 @@ impl<'a> VirtualMachine<'a> {
                         ip = target as usize;
                     }
                 },
+                Opcode::JmpEither(if_true, if_false) => {
+                    let v = frame.pop_operand()?.get_i32()?;
+                    if v != 0 {
+                        ip = if_true as usize;
+                    } else {
+                        ip = if_false as usize;
+                    }
+                },
                 Opcode::JmpTable(ref table, otherwise) => {
                     let v = frame.pop_operand()?.get_i32()? as usize;
                     if v < table.len() {

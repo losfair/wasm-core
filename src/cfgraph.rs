@@ -15,7 +15,7 @@ pub struct BasicBlock {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Branch {
     Jmp(BlockId),
-    JmpIf(BlockId),
+    JmpEither(BlockId, BlockId), // (if_true, if_false)
     JmpTable(Vec<BlockId>, BlockId),
     Return
 }
@@ -54,7 +54,12 @@ impl CFGraph {
                 OpOrBr::Br(br) => {
                     match br {
                         Branch::Jmp(BlockId(id)) => Opcode::Jmp(begin_instrs[id]),
-                        Branch::JmpIf(BlockId(id)) => Opcode::JmpIf(begin_instrs[id]),
+                        Branch::JmpEither(BlockId(if_true), BlockId(if_false)) => {
+                            Opcode::JmpEither(
+                                begin_instrs[if_true],
+                                begin_instrs[if_false]
+                            )
+                        },
                         Branch::JmpTable(targets, BlockId(otherwise)) => Opcode::JmpTable(
                             targets.into_iter().map(|BlockId(id)| begin_instrs[id]).collect(),
                             begin_instrs[otherwise]
@@ -79,7 +84,7 @@ impl BasicBlock {
 impl Opcode {
     fn is_branch(&self) -> bool {
         match *self {
-            Opcode::Jmp(_) | Opcode::JmpIf(_) | Opcode::JmpTable(_, _) | Opcode::Return => true,
+            Opcode::Jmp(_) | Opcode::JmpIf(_) | Opcode::JmpEither(_, _) | Opcode::JmpTable(_, _) | Opcode::Return => true,
             _ => false
         }
     }
@@ -101,6 +106,10 @@ fn scan_basic_blocks(ops: &[Opcode]) -> Vec<BasicBlock> {
                     },
                     Opcode::JmpIf(id) => {
                         jmp_targets.insert(id);
+                    },
+                    Opcode::JmpEither(a, b) => {
+                        jmp_targets.insert(a);
+                        jmp_targets.insert(b);
                     },
                     Opcode::JmpTable(ref targets, otherwise) => {
                         for t in targets {
@@ -144,7 +153,14 @@ fn scan_basic_blocks(ops: &[Opcode]) -> Vec<BasicBlock> {
             if op.is_branch() {
                 bbs[current_bb].br = Some(match *op {
                     Opcode::Jmp(target) => Branch::Jmp(*mappings.get(&target).unwrap()),
-                    Opcode::JmpIf(target) => Branch::JmpIf(*mappings.get(&target).unwrap()),
+                    Opcode::JmpIf(target) => Branch::JmpEither(
+                        *mappings.get(&target).unwrap(), // if true
+                        *mappings.get(&((i + 1) as u32)).unwrap() // otherwise
+                    ),
+                    Opcode::JmpEither(a, b) => Branch::JmpEither(
+                        *mappings.get(&a).unwrap(),
+                        *mappings.get(&b).unwrap()
+                    ),
                     Opcode::JmpTable(ref targets, otherwise) => {
                         Branch::JmpTable(
                             targets.iter().map(|t| *mappings.get(t).unwrap()).collect(),
@@ -175,7 +191,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_cfg_build() {
+    fn test_jmp() {
         let opcodes: Vec<Opcode> = vec! [
             // bb 0
             Opcode::I32Const(100), // 0
@@ -191,6 +207,31 @@ mod tests {
 
         assert_eq!(cfg.blocks.len(), 3);
         assert_eq!(cfg.blocks[0].br, Some(Branch::Jmp(BlockId(2))));
+        assert_eq!(cfg.blocks[1].br, Some(Branch::Jmp(BlockId(2))));
+        assert_eq!(cfg.blocks[2].br, Some(Branch::Return));
+
+        eprintln!("{:?}", cfg);
+
+        eprintln!("{:?}", cfg.gen_opcodes());
+    }
+
+    #[test]
+    fn test_jmp_if() {
+        let opcodes: Vec<Opcode> = vec! [
+            // bb 0
+            Opcode::I32Const(100), // 0
+            Opcode::JmpIf(3), // 1
+            // bb 1, implicit fallthrough
+            Opcode::I32Const(50), // 2
+            // bb 2 (due to jmp)
+            Opcode::I32Const(25), // 3
+            Opcode::Return // 4
+        ];
+
+        let cfg = CFGraph::from_function(opcodes.as_slice());
+
+        assert_eq!(cfg.blocks.len(), 3);
+        assert_eq!(cfg.blocks[0].br, Some(Branch::JmpEither(BlockId(2), BlockId(1))));
         assert_eq!(cfg.blocks[1].br, Some(Branch::Jmp(BlockId(2))));
         assert_eq!(cfg.blocks[2].br, Some(Branch::Return));
 
