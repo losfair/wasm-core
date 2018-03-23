@@ -37,3 +37,4 @@ pub mod value;
 pub mod resolver;
 pub mod fp_ops;
 pub mod cfgraph;
+pub mod optimizers;

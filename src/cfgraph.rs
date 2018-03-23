@@ -20,8 +20,8 @@ pub enum Branch {
     Return
 }
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
-pub struct BlockId(usize);
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+pub struct BlockId(pub usize);
 
 pub type OptimizeResult<T> = Result<T, OptimizeError>;
 
@@ -113,11 +113,9 @@ impl CFGraph {
     }
 
     pub fn optimize<
-        T: AsRef<I>,
-        I: Optimizer<Return = R>,
+        T: Optimizer<Return = R>,
         R
     >(&mut self, optimizer: T) -> OptimizeResult<R> {
-        let optimizer = optimizer.as_ref();
         optimizer.optimize(self)
     }
 }
@@ -142,9 +140,14 @@ impl Opcode {
 
 /// Constructs a Vec of basic blocks.
 fn scan_basic_blocks(ops: &[Opcode]) -> OptimizeResult<Vec<BasicBlock>> {
-    let mut bbs: Vec<BasicBlock> = vec! [ ];
+    // The "initial" basic block only jumps to the real first one.
+    let mut bbs: Vec<BasicBlock> = vec! [ BasicBlock::new() ];
+
     let mut mappings: BTreeMap<u32, BlockId> = BTreeMap::new();
     let mut jmp_targets: BTreeSet<u32> = BTreeSet::new();
+
+    // Entry point.
+    jmp_targets.insert(0);
 
     {
         // Detect jmp targets
@@ -247,22 +250,22 @@ mod tests {
     #[test]
     fn test_jmp() {
         let opcodes: Vec<Opcode> = vec! [
-            // bb 0
+            // bb 1
             Opcode::I32Const(100), // 0
             Opcode::Jmp(3), // 1
-            // bb 1, implicit fallthrough
+            // bb 2, implicit fallthrough
             Opcode::I32Const(50), // 2
-            // bb 2 (due to jmp)
+            // bb 3 (due to jmp)
             Opcode::I32Const(25), // 3
             Opcode::Return // 4
         ];
 
         let cfg = CFGraph::from_function(opcodes.as_slice()).unwrap();
 
-        assert_eq!(cfg.blocks.len(), 3);
-        assert_eq!(cfg.blocks[0].br, Some(Branch::Jmp(BlockId(2))));
-        assert_eq!(cfg.blocks[1].br, Some(Branch::Jmp(BlockId(2))));
-        assert_eq!(cfg.blocks[2].br, Some(Branch::Return));
+        assert_eq!(cfg.blocks.len(), 4);
+        assert_eq!(cfg.blocks[1].br, Some(Branch::Jmp(BlockId(3))));
+        assert_eq!(cfg.blocks[2].br, Some(Branch::Jmp(BlockId(3))));
+        assert_eq!(cfg.blocks[3].br, Some(Branch::Return));
 
         eprintln!("{:?}", cfg);
 
@@ -272,22 +275,42 @@ mod tests {
     #[test]
     fn test_jmp_if() {
         let opcodes: Vec<Opcode> = vec! [
-            // bb 0
+            // bb 1
             Opcode::I32Const(100), // 0
             Opcode::JmpIf(3), // 1
-            // bb 1, implicit fallthrough
+            // bb 2, implicit fallthrough
             Opcode::I32Const(50), // 2
-            // bb 2 (due to jmp)
+            // bb 3 (due to jmp)
             Opcode::I32Const(25), // 3
             Opcode::Return // 4
         ];
 
         let cfg = CFGraph::from_function(opcodes.as_slice()).unwrap();
 
+        assert_eq!(cfg.blocks.len(), 4);
+        assert_eq!(cfg.blocks[1].br, Some(Branch::JmpEither(BlockId(3), BlockId(2))));
+        assert_eq!(cfg.blocks[2].br, Some(Branch::Jmp(BlockId(3))));
+        assert_eq!(cfg.blocks[3].br, Some(Branch::Return));
+
+        eprintln!("{:?}", cfg);
+
+        eprintln!("{:?}", cfg.gen_opcodes());
+    }
+
+    #[test]
+    fn test_circular() {
+        let opcodes: Vec<Opcode> = vec! [
+            // bb 1
+            Opcode::I32Const(100), // 0
+            Opcode::JmpIf(0),
+            // bb 2
+            Opcode::Return // 4
+        ];
+
+        let cfg = CFGraph::from_function(opcodes.as_slice()).unwrap();
+
         assert_eq!(cfg.blocks.len(), 3);
-        assert_eq!(cfg.blocks[0].br, Some(Branch::JmpEither(BlockId(2), BlockId(1))));
-        assert_eq!(cfg.blocks[1].br, Some(Branch::Jmp(BlockId(2))));
-        assert_eq!(cfg.blocks[2].br, Some(Branch::Return));
+        assert_eq!(cfg.blocks[1].br, Some(Branch::JmpEither(BlockId(1), BlockId(2))));
 
         eprintln!("{:?}", cfg);
 
