@@ -140,10 +140,10 @@ impl Opcode {
 
 /// Constructs a Vec of basic blocks.
 fn scan_basic_blocks(ops: &[Opcode]) -> OptimizeResult<Vec<BasicBlock>> {
-    // The "initial" basic block only jumps to the real first one.
-    let mut bbs: Vec<BasicBlock> = vec! [ BasicBlock::new() ];
+    if ops.len() == 0 {
+        return Ok(Vec::new());
+    }
 
-    let mut mappings: BTreeMap<u32, BlockId> = BTreeMap::new();
     let mut jmp_targets: BTreeSet<u32> = BTreeSet::new();
 
     // Entry point.
@@ -151,7 +151,7 @@ fn scan_basic_blocks(ops: &[Opcode]) -> OptimizeResult<Vec<BasicBlock>> {
 
     {
         // Detect jmp targets
-        for op in ops.iter() {
+        for (i, op) in ops.iter().enumerate() {
             if op.is_branch() {
                 match *op {
                     Opcode::Jmp(id) => {
@@ -173,71 +173,97 @@ fn scan_basic_blocks(ops: &[Opcode]) -> OptimizeResult<Vec<BasicBlock>> {
                     Opcode::Return => {},
                     _ => unreachable!()
                 }
-            }
-        }
 
-        let mut is_first_instr: bool = true;
-
-        for (i, op) in ops.iter().enumerate() {
-            // If we are at the first instruction after a jmp or the current
-            // instruction is a target of another jmp, then we are in a new
-            // basic block
-            if is_first_instr || jmp_targets.contains(&(i as u32)) {
-                // Add it into mappings
-                mappings.insert(i as u32, BlockId(bbs.len()));
-
-                // The newly-entered basic block
-                bbs.push(BasicBlock::new());
-
-                is_first_instr = false;
-            }
-
-            // We will be in a new basic block after branching
-            if op.is_branch() {
-                is_first_instr = true;
+                // The instruction following a branch starts a new basic block.
+                jmp_targets.insert((i + 1) as u32);
             }
         }
     }
 
-    {
-        let mut current_bb: usize = 0;
+    // Split opcodes into basic blocks
+    let (bb_ops, instr_mappings): (Vec<&[Opcode]>, BTreeMap<u32, BlockId>) = {
+        let mut bb_ops: Vec<&[Opcode]> = Vec::new();
+        let mut instr_mappings: BTreeMap<u32, BlockId> = BTreeMap::new();
 
-        for (i, op) in ops.iter().enumerate() {
+        // jmp_targets.len() >= 1 holds here because of `jmp_targets.insert(0)`
+        let mut jmp_targets: Vec<u32> = jmp_targets.iter().map(|v| *v).collect();
+
+        // [start, end) ...
+        // ops.len
+        {
+            let last = *jmp_targets.last().unwrap() as usize;
+            if last > ops.len() {
+                return Err(OptimizeError::InvalidBranchTarget);
+            }
+
+            // ops.len() >= 1 holds here.
+            // if last == 0 (same as jmp_targets.len() == 1) then a new jmp target will still be pushed
+            // so that jmp_targets.len() >= 2 always hold after this.
+            if last < ops.len() {
+                jmp_targets.push(ops.len() as u32);
+            }
+        }
+
+        for i in 0..jmp_targets.len() - 1 {
+            // [st..ed)
+            let st = jmp_targets[i] as usize;
+            let ed = jmp_targets[i + 1] as usize;
+            instr_mappings.insert(st as u32, BlockId(bb_ops.len()));
+            bb_ops.push(&ops[st..ed]);
+        }
+
+        (bb_ops, instr_mappings)
+    };
+
+    let mut bbs: Vec<BasicBlock> = Vec::new();
+
+    for (i, bb) in bb_ops.iter().enumerate() {
+        let mut bb = bb.to_vec();
+
+        let br: Option<Branch> = if let Some(op) = bb.last() {
             if op.is_branch() {
-                bbs[current_bb].br = Some(match *op {
-                    Opcode::Jmp(target) => Branch::Jmp(mappings.get(&target).checked_branch_target()?),
+                Some(match *op {
+                    Opcode::Jmp(target) => Branch::Jmp(instr_mappings.get(&target).checked_branch_target()?),
                     Opcode::JmpIf(target) => Branch::JmpEither(
-                        mappings.get(&target).checked_branch_target()?, // if true
-                        mappings.get(&((i + 1) as u32)).checked_branch_target()? // otherwise
+                        instr_mappings.get(&target).checked_branch_target()?, // if true
+                        BlockId(i + 1) // otherwise
                     ),
                     Opcode::JmpEither(a, b) => Branch::JmpEither(
-                        mappings.get(&a).checked_branch_target()?,
-                        mappings.get(&b).checked_branch_target()?
+                        instr_mappings.get(&a).checked_branch_target()?,
+                        instr_mappings.get(&b).checked_branch_target()?
                     ),
                     Opcode::JmpTable(ref targets, otherwise) => {
                         let mut br_targets: Vec<BlockId> = Vec::new();
                         for t in targets {
-                            br_targets.push(mappings.get(t).checked_branch_target()?);
+                            br_targets.push(instr_mappings.get(t).checked_branch_target()?);
                         }
                         Branch::JmpTable(
                             br_targets,
-                            mappings.get(&otherwise).checked_branch_target()?
+                            instr_mappings.get(&otherwise).checked_branch_target()?
                         )
                     },
                     Opcode::Return => Branch::Return,
                     _ => unreachable!()
-                });
-                current_bb += 1;
+                })
             } else {
-                if jmp_targets.contains(&(i as u32)) { // implicit fallthrough
-                    bbs[current_bb].br = Some(Branch::Jmp(BlockId(current_bb + 1)));
-                    current_bb += 1;
-                }
-                bbs[current_bb].opcodes.push(op.clone());
+                None
             }
-        }
+        } else {
+            None
+        };
 
-        assert_eq!(current_bb, bbs.len());
+        let br: Branch = if let Some(v) = br {
+            bb.pop().unwrap();
+            v
+        } else {
+            Branch::Jmp(BlockId(i + 1))
+        };
+
+        let mut result = BasicBlock::new();
+        result.opcodes = bb;
+        result.br = Some(br);
+
+        bbs.push(result);
     }
 
     Ok(bbs)
@@ -250,22 +276,22 @@ mod tests {
     #[test]
     fn test_jmp() {
         let opcodes: Vec<Opcode> = vec! [
-            // bb 1
+            // bb 0
             Opcode::I32Const(100), // 0
             Opcode::Jmp(3), // 1
-            // bb 2, implicit fallthrough
+            // bb 1, implicit fallthrough
             Opcode::I32Const(50), // 2
-            // bb 3 (due to jmp)
+            // bb 2 (due to jmp)
             Opcode::I32Const(25), // 3
             Opcode::Return // 4
         ];
 
         let cfg = CFGraph::from_function(opcodes.as_slice()).unwrap();
 
-        assert_eq!(cfg.blocks.len(), 4);
-        assert_eq!(cfg.blocks[1].br, Some(Branch::Jmp(BlockId(3))));
-        assert_eq!(cfg.blocks[2].br, Some(Branch::Jmp(BlockId(3))));
-        assert_eq!(cfg.blocks[3].br, Some(Branch::Return));
+        assert_eq!(cfg.blocks.len(), 3);
+        assert_eq!(cfg.blocks[0].br, Some(Branch::Jmp(BlockId(2))));
+        assert_eq!(cfg.blocks[1].br, Some(Branch::Jmp(BlockId(2))));
+        assert_eq!(cfg.blocks[2].br, Some(Branch::Return));
 
         eprintln!("{:?}", cfg);
 
@@ -275,22 +301,22 @@ mod tests {
     #[test]
     fn test_jmp_if() {
         let opcodes: Vec<Opcode> = vec! [
-            // bb 1
+            // bb 0
             Opcode::I32Const(100), // 0
             Opcode::JmpIf(3), // 1
-            // bb 2, implicit fallthrough
+            // bb 1, implicit fallthrough
             Opcode::I32Const(50), // 2
-            // bb 3 (due to jmp)
+            // bb 2 (due to jmp)
             Opcode::I32Const(25), // 3
             Opcode::Return // 4
         ];
 
         let cfg = CFGraph::from_function(opcodes.as_slice()).unwrap();
 
-        assert_eq!(cfg.blocks.len(), 4);
-        assert_eq!(cfg.blocks[1].br, Some(Branch::JmpEither(BlockId(3), BlockId(2))));
-        assert_eq!(cfg.blocks[2].br, Some(Branch::Jmp(BlockId(3))));
-        assert_eq!(cfg.blocks[3].br, Some(Branch::Return));
+        assert_eq!(cfg.blocks.len(), 3);
+        assert_eq!(cfg.blocks[0].br, Some(Branch::JmpEither(BlockId(2), BlockId(1))));
+        assert_eq!(cfg.blocks[1].br, Some(Branch::Jmp(BlockId(2))));
+        assert_eq!(cfg.blocks[2].br, Some(Branch::Return));
 
         eprintln!("{:?}", cfg);
 
@@ -309,8 +335,8 @@ mod tests {
 
         let cfg = CFGraph::from_function(opcodes.as_slice()).unwrap();
 
-        assert_eq!(cfg.blocks.len(), 3);
-        assert_eq!(cfg.blocks[1].br, Some(Branch::JmpEither(BlockId(1), BlockId(2))));
+        assert_eq!(cfg.blocks.len(), 2);
+        assert_eq!(cfg.blocks[0].br, Some(Branch::JmpEither(BlockId(0), BlockId(1))));
 
         eprintln!("{:?}", cfg);
 

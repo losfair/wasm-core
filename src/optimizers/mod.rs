@@ -96,25 +96,25 @@ mod tests {
     #[test]
     fn test_remove_dead_basic_blocks() {
         let opcodes: Vec<Opcode> = vec! [
-            // bb 1
+            // bb 0
             Opcode::I32Const(100), // 0
             Opcode::Jmp(3), // 1
-            // bb 2, never reached
+            // bb 1, never reached
             Opcode::I32Const(50), // 2
-            // bb 3 (due to jmp)
+            // bb 2 (due to jmp)
             Opcode::I32Const(25), // 3
             Opcode::JmpIf(0), // 4
-            // bb 4
+            // bb 3
             Opcode::Return // 5
         ];
 
         let mut cfg = CFGraph::from_function(opcodes.as_slice()).unwrap();
         cfg.optimize(RemoveDeadBasicBlocks).unwrap();
 
-        assert_eq!(cfg.blocks.len(), 4);
-        assert_eq!(cfg.blocks[1].br, Some(Branch::Jmp(BlockId(2))));
-        assert_eq!(cfg.blocks[2].br, Some(Branch::JmpEither(BlockId(1), BlockId(3))));
-        assert_eq!(cfg.blocks[3].br, Some(Branch::Return));
+        assert_eq!(cfg.blocks.len(), 3);
+        assert_eq!(cfg.blocks[0].br, Some(Branch::Jmp(BlockId(1))));
+        assert_eq!(cfg.blocks[1].br, Some(Branch::JmpEither(BlockId(0), BlockId(2))));
+        assert_eq!(cfg.blocks[2].br, Some(Branch::Return));
 
         eprintln!("{:?}", cfg);
 
