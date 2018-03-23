@@ -71,6 +71,67 @@ impl CFGraph {
         })
     }
 
+    pub fn validate(&self) -> OptimizeResult<()> {
+        for blk in &self.blocks {
+            for op in &blk.opcodes {
+                if op.is_branch() {
+                    return Err(OptimizeError::Custom(
+                        "Branch instruction(s) found in the middle of a basic block".into()
+                    ));
+                }
+            }
+            let br = if let Some(ref br) = blk.br {
+                br
+            } else {
+                return Err(OptimizeError::Custom(
+                    "Empty branch target(s) found".into()
+                ));
+            };
+            let br_ok = match *br {
+                Branch::Jmp(id) => {
+                    if id.0 >= self.blocks.len() {
+                        false
+                    } else {
+                        true
+                    }
+                },
+                Branch::JmpEither(a, b) => {
+                    if a.0 >= self.blocks.len() || b.0 >= self.blocks.len() {
+                        false
+                    } else {
+                        true
+                    }
+                },
+                Branch::JmpTable(ref targets, otherwise) => {
+                    let mut ok = true;
+                    for t in targets {
+                        if t.0 >= self.blocks.len() {
+                            ok = false;
+                            break;
+                        }
+                    }
+                    if ok {
+                        if otherwise.0 >= self.blocks.len() {
+                            false
+                        } else {
+                            true
+                        }
+                    } else {
+                        false
+                    }
+                },
+                Branch::Return => true
+            };
+            if !br_ok {
+                return Err(OptimizeError::Custom(
+                    "Invalid branch target(s)".into()
+                ));
+            }
+        }
+
+        Ok(())
+    }
+
     /// Generate sequential opcodes.
     pub fn gen_opcodes(&self) -> Vec<Opcode> {
         enum OpOrBr {
@@ -287,6 +348,7 @@ mod tests {
         ];
 
         let cfg = CFGraph::from_function(opcodes.as_slice()).unwrap();
+        cfg.validate().unwrap();
 
         assert_eq!(cfg.blocks.len(), 3);
         assert_eq!(cfg.blocks[0].br, Some(Branch::Jmp(BlockId(2))));
@@ -312,6 +374,7 @@ mod tests {
         ];
 
         let cfg = CFGraph::from_function(opcodes.as_slice()).unwrap();
+        cfg.validate().unwrap();
 
         assert_eq!(cfg.blocks.len(), 3);
         assert_eq!(cfg.blocks[0].br, Some(Branch::JmpEither(BlockId(2), BlockId(1))));
@@ -334,6 +397,7 @@ mod tests {
         ];
 
         let cfg = CFGraph::from_function(opcodes.as_slice()).unwrap();
+        cfg.validate().unwrap();
 
         assert_eq!(cfg.blocks.len(), 2);
         assert_eq!(cfg.blocks[0].br, Some(Branch::JmpEither(BlockId(0), BlockId(1))));

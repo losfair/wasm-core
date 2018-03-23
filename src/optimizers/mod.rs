@@ -109,7 +109,9 @@ mod tests {
         ];
 
         let mut cfg = CFGraph::from_function(opcodes.as_slice()).unwrap();
+        cfg.validate().unwrap();
         cfg.optimize(RemoveDeadBasicBlocks).unwrap();
+        cfg.validate().unwrap();
 
         assert_eq!(cfg.blocks.len(), 3);
         assert_eq!(cfg.blocks[0].br, Some(Branch::Jmp(BlockId(1))));
