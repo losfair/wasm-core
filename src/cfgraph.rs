@@ -3,13 +3,13 @@ use prelude::{BTreeMap, BTreeSet};
 
 #[derive(Clone, Debug)]
 pub struct CFGraph {
-    blocks: Vec<BasicBlock>
+    pub blocks: Vec<BasicBlock>
 }
 
 #[derive(Clone, Debug)]
 pub struct BasicBlock {
-    opcodes: Vec<Opcode>,
-    br: Option<Branch> // must be Some in a valid control graph
+    pub opcodes: Vec<Opcode>,
+    pub br: Option<Branch> // must be Some in a valid control graph
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -23,11 +23,52 @@ pub enum Branch {
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub struct BlockId(usize);
 
-impl CFGraph {
-    pub fn from_function(fops: &[Opcode]) -> CFGraph {
-        CFGraph {
-            blocks: scan_basic_blocks(fops)
+pub type OptimizeResult<T> = Result<T, OptimizeError>;
+
+#[derive(Clone, Debug)]
+pub enum OptimizeError {
+    InvalidBranchTarget,
+    Custom(String)
+}
+
+pub trait Optimizer {
+    type Return;
+
+    fn optimize(&self, cfg: &mut CFGraph) -> OptimizeResult<Self::Return>;
+}
+
+fn _assert_optimizer_trait_object_safe() {
+    struct Opt {}
+    impl Optimizer for Opt {
+        type Return = ();
+        fn optimize(&self, _: &mut CFGraph) -> OptimizeResult<Self::Return> { Ok(()) }
+    }
+
+    let _obj: Box<Optimizer<Return = ()>> = Box::new(Opt {});
+}
+
+trait CheckedBranchTarget {
+    type TValue;
+
+    fn checked_branch_target(&self) -> OptimizeResult<Self::TValue>;
+}
+
+impl<'a> CheckedBranchTarget for Option<&'a BlockId> {
+    type TValue = BlockId;
+
+    fn checked_branch_target(&self) -> OptimizeResult<BlockId> {
+        match *self {
+            Some(v) => Ok(*v),
+            None => Err(OptimizeError::InvalidBranchTarget)
         }
+    }
+}
+
+impl CFGraph {
+    pub fn from_function(fops: &[Opcode]) -> OptimizeResult<CFGraph> {
+        Ok(CFGraph {
+            blocks: scan_basic_blocks(fops)?
+        })
     }
 
     /// Generate sequential opcodes.
@@ -70,6 +111,15 @@ impl CFGraph {
             }
         }).collect()
     }
+
+    pub fn optimize<
+        T: AsRef<I>,
+        I: Optimizer<Return = R>,
+        R
+    >(&mut self, optimizer: T) -> OptimizeResult<R> {
+        let optimizer = optimizer.as_ref();
+        optimizer.optimize(self)
+    }
 }
 
 impl BasicBlock {
@@ -91,7 +141,7 @@ impl Opcode {
 }
 
 /// Constructs a Vec of basic blocks.
-fn scan_basic_blocks(ops: &[Opcode]) -> Vec<BasicBlock> {
+fn scan_basic_blocks(ops: &[Opcode]) -> OptimizeResult<Vec<BasicBlock>> {
     let mut bbs: Vec<BasicBlock> = vec! [ ];
     let mut mappings: BTreeMap<u32, BlockId> = BTreeMap::new();
     let mut jmp_targets: BTreeSet<u32> = BTreeSet::new();
@@ -152,19 +202,23 @@ fn scan_basic_blocks(ops: &[Opcode]) -> Vec<BasicBlock> {
         for (i, op) in ops.iter().enumerate() {
             if op.is_branch() {
                 bbs[current_bb].br = Some(match *op {
-                    Opcode::Jmp(target) => Branch::Jmp(*mappings.get(&target).unwrap()),
+                    Opcode::Jmp(target) => Branch::Jmp(mappings.get(&target).checked_branch_target()?),
                     Opcode::JmpIf(target) => Branch::JmpEither(
-                        *mappings.get(&target).unwrap(), // if true
-                        *mappings.get(&((i + 1) as u32)).unwrap() // otherwise
+                        mappings.get(&target).checked_branch_target()?, // if true
+                        mappings.get(&((i + 1) as u32)).checked_branch_target()? // otherwise
                     ),
                     Opcode::JmpEither(a, b) => Branch::JmpEither(
-                        *mappings.get(&a).unwrap(),
-                        *mappings.get(&b).unwrap()
+                        mappings.get(&a).checked_branch_target()?,
+                        mappings.get(&b).checked_branch_target()?
                     ),
                     Opcode::JmpTable(ref targets, otherwise) => {
+                        let mut br_targets: Vec<BlockId> = Vec::new();
+                        for t in targets {
+                            br_targets.push(mappings.get(t).checked_branch_target()?);
+                        }
                         Branch::JmpTable(
-                            targets.iter().map(|t| *mappings.get(t).unwrap()).collect(),
-                            *mappings.get(&otherwise).unwrap()
+                            br_targets,
+                            mappings.get(&otherwise).checked_branch_target()?
                         )
                     },
                     Opcode::Return => Branch::Return,
@@ -183,7 +237,7 @@ fn scan_basic_blocks(ops: &[Opcode]) -> Vec<BasicBlock> {
         assert_eq!(current_bb, bbs.len());
     }
 
-    bbs
+    Ok(bbs)
 }
 
 #[cfg(test)]
@@ -203,7 +257,7 @@ mod tests {
             Opcode::Return // 4
         ];
 
-        let cfg = CFGraph::from_function(opcodes.as_slice());
+        let cfg = CFGraph::from_function(opcodes.as_slice()).unwrap();
 
         assert_eq!(cfg.blocks.len(), 3);
         assert_eq!(cfg.blocks[0].br, Some(Branch::Jmp(BlockId(2))));
@@ -228,7 +282,7 @@ mod tests {
             Opcode::Return // 4
         ];
 
-        let cfg = CFGraph::from_function(opcodes.as_slice());
+        let cfg = CFGraph::from_function(opcodes.as_slice()).unwrap();
 
         assert_eq!(cfg.blocks.len(), 3);
         assert_eq!(cfg.blocks[0].br, Some(Branch::JmpEither(BlockId(2), BlockId(1))));
@@ -238,5 +292,14 @@ mod tests {
         eprintln!("{:?}", cfg);
 
         eprintln!("{:?}", cfg.gen_opcodes());
+    }
+
+    #[test]
+    fn test_invalid_branch_target() {
+        let opcodes: Vec<Opcode> = vec! [ Opcode::Jmp(10) ];
+        match CFGraph::from_function(opcodes.as_slice()) {
+            Err(OptimizeError::InvalidBranchTarget) => {},
+            _ => panic!("Expecting an InvalidBranchTarget error")
+        }
     }
 }
