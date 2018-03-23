@@ -21,6 +21,15 @@ use bincode_no_std as bincode;
 #[cfg(feature = "std")]
 extern crate bincode;
 
+#[macro_use]
+extern crate lazy_static;
+
+#[cfg(feature = "jit")]
+extern crate llvm_sys;
+
+#[cfg(feature = "jit")]
+pub mod jit;
+
 #[cfg(feature = "std")]
 mod prelude;
 

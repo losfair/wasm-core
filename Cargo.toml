@@ -11,8 +11,11 @@ serde = { version = "1", default-features = false }
 serde_derive = { version = "1", default-features = false }
 bincode-no-std = { version = "1.0.0", optional = true }
 bincode = { version = "1.0.0", optional = true }
+llvm-sys = { version = "60.0", optional = true }
+lazy_static = "1.0"
 
 [features]
 default = ["std"]
 std = ["bincode"]
 no_std = ["bincode-no-std"]
+jit = ["llvm-sys"]
