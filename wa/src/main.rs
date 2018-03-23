@@ -10,7 +10,7 @@ use std::io::Read;
 use std::io::Write;
 
 use translator::wasm_core::value::Value;
-use translator::wasm_core::module::{Module, Export};
+use translator::wasm_core::module::{Module, Export, Type};
 use translator::wasm_core::executor::{VirtualMachine, RuntimeConfig, NativeResolver, NativeEntry, ExecuteError};
 use translator::wasm_core::resolver::EmscriptenResolver;
 use translator::wasm_core::optimizers::RemoveDeadBasicBlocks;
@@ -71,8 +71,6 @@ fn main() {
         }))
     }).unwrap();
 
-    let argv_addr = write_main_args_emscripten(&mut vm, call_args.as_slice());
-
     for (k, v) in &module.exports {
         if k.starts_with("__GLOBAL_") {
             let Export::Function(id) = *v;
@@ -87,10 +85,22 @@ fn main() {
 
     let entry = vm.lookup_exported_func("_main").unwrap();
 
-    let result = vm.execute(entry, &[
-        Value::I32(call_args.len() as i32),
-        Value::I32(argv_addr)
-    ]);
+    let result = {
+        let typeidx = module.functions[entry].typeidx;
+        let Type::Func(ref ty_args, ref ty_rets) = module.types[typeidx as usize];
+        if ty_args.len() == 0 {
+            vm.execute(entry, &[])
+        } else if ty_args.len() == 2 {
+            let argv_addr = write_main_args_emscripten(&mut vm, call_args.as_slice());
+            vm.execute(entry, &[
+                Value::I32(call_args.len() as i32),
+                Value::I32(argv_addr)
+            ])
+        } else {
+            panic!("Invalid signature for main function");
+        }
+    };
+    
     match result {
         Ok(_) => {},
         Err(e) => {
