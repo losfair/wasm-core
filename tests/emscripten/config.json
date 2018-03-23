@@ -1,0 +1,6 @@
+{
+    "hello_world": {
+        "source": "hello_world.cc",
+        "expected": "Hello world!"
+    }
+}
