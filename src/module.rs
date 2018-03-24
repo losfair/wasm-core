@@ -5,7 +5,7 @@ use value::Value;
 use opcode::Opcode;
 use bincode;
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
 pub struct Module {
     pub types: Vec<Type>,
     pub functions: Vec<Function>,

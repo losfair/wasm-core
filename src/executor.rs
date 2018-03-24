@@ -72,10 +72,10 @@ pub enum Mutable {
 }
 
 pub struct RuntimeInfo {
-    debug_print_hook: Option<fn(s: &str)>,
-    mem: Memory,
-    globals: Vec<Value>,
-    resolver: Box<NativeResolver>
+    pub(crate) debug_print_hook: Option<fn(s: &str)>,
+    pub(crate) mem: Memory,
+    pub(crate) globals: Vec<Value>,
+    pub(crate) resolver: Box<NativeResolver>
 }
 
 pub struct RuntimeConfig {

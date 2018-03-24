@@ -3,6 +3,7 @@
 #![feature(alloc)]
 #![feature(nll)]
 #![feature(core_intrinsics)]
+#![feature(underscore_lifetimes)]
 
 #[cfg(not(feature = "std"))]
 #[macro_use]
