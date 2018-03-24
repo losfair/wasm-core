@@ -4,6 +4,7 @@ use llvm_sys::core::*;
 use llvm_sys::execution_engine::*;
 use llvm_sys::target::*;
 use llvm_sys::analysis::*;
+use llvm_sys::transforms::pass_manager_builder::*;
 use llvm_sys::LLVMIntPredicate;
 use std::rc::Rc;
 use std::cell::Cell;
@@ -86,6 +87,37 @@ impl Module {
             })
         }
     }
+
+    pub fn verify(&self) {
+        unsafe {
+            LLVMVerifyModule(
+                self.inner._ref,
+                LLVMVerifierFailureAction::LLVMAbortProcessAction,
+                ::std::ptr::null_mut()
+            );
+        }
+    }
+
+    pub fn optimize(&self) {
+        self.verify();
+
+        unsafe {
+            let pm = LLVMCreatePassManager();
+
+            {
+                let pmb = LLVMPassManagerBuilderCreate();
+
+                LLVMPassManagerBuilderSetOptLevel(pmb, 3);
+                LLVMPassManagerBuilderPopulateModulePassManager(pmb, pm);
+
+                LLVMPassManagerBuilderDispose(pmb);
+            }
+
+            LLVMRunPassManager(pm, self.inner._ref);
+
+            LLVMDisposePassManager(pm);
+        }
+    }
 }
 
 impl Drop for ModuleImpl {
@@ -100,7 +132,8 @@ impl Drop for ModuleImpl {
 
 pub struct ExecutionEngine {
     _context: Context,
-    _ref: LLVMExecutionEngineRef
+    _ref: LLVMExecutionEngineRef,
+    _module_ref: LLVMModuleRef
 }
 
 impl ExecutionEngine {
@@ -151,7 +184,8 @@ impl ExecutionEngine {
 
             ExecutionEngine {
                 _context: m._context.clone(),
-                _ref: ee
+                _ref: ee,
+                _module_ref: m._ref
             }
         }
     }
@@ -167,6 +201,15 @@ impl ExecutionEngine {
             None
         } else {
             Some(addr)
+        }
+    }
+
+    pub fn to_string_leaking(&self) -> String {
+        unsafe {
+            let s = CStr::from_ptr(
+                LLVMPrintModuleToString(self._module_ref)
+            ).to_str().unwrap();
+            s.to_string()
         }
     }
 }

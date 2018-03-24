@@ -447,15 +447,21 @@ mod tests {
             locals: Vec::new(),
             body: FunctionBody {
                 opcodes: vec! [
-                    Opcode::I32Const(42),
-                    Opcode::Return
+                    Opcode::I32Const(42), // 0
+                    Opcode::Jmp(3), // 1
+                    Opcode::I32Const(21), // 2
+                    Opcode::Return // 3
                 ]
             }
         });
         let compiler = Compiler::new(&m, llvm::Context::new()).unwrap();
         let target_module = compiler.compile().unwrap();
 
+        target_module.optimize();
+
         let ee = llvm::ExecutionEngine::new(target_module);
+
+        println!("{}", ee.to_string_leaking());
 
         let f: extern "C" fn () -> i64 = unsafe {
             ::std::mem::transmute(ee.get_function_address(
