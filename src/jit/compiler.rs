@@ -330,6 +330,9 @@ impl<'a> Compiler<'a> {
             for op in &bb.opcodes {
                 unsafe {
                     match *op {
+                        Opcode::Drop => {
+                            build_stack_pop(&target_bb.builder());
+                        },
                         Opcode::I32Const(v) => {
                             let builder = target_bb.builder();
                             let v = builder.build_cast(
@@ -342,6 +345,21 @@ impl<'a> Compiler<'a> {
                                 llvm::Type::int64(ctx)
                             );
                             build_stack_push(&builder, v);
+                        },
+                        Opcode::I64Const(v) => {
+                            let builder = target_bb.builder();
+                            let v = builder.build_const_int(
+                                llvm::Type::int64(ctx),
+                                v as _,
+                                false
+                            );
+                            build_stack_push(&builder, v);
+                        },
+                        Opcode::I32Add => {
+                            let builder = target_bb.builder();
+                            let b = build_stack_pop(&builder);
+                            let a = build_stack_pop(&builder);
+                            build_stack_push(&builder, builder.build_add(a, b));
                         },
                         _ => panic!("Opcode not implemented: {:?}", op)
                     }
@@ -436,22 +454,17 @@ impl ValType {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::panic::{catch_unwind, AssertUnwindSafe};
 
-    #[test]
-    fn test_simple_jit() {
+    fn build_ee_from_fn_body(ty: Type, locals: Vec<ValType>, body: Vec<Opcode>) -> llvm::ExecutionEngine {
         let mut m = Module::default();
-        m.types.push(Type::Func(vec! [], vec! [ ValType::I32 ]));
+        m.types.push(ty);
         m.functions.push(Function {
             name: None,
             typeidx: 0,
-            locals: Vec::new(),
+            locals: locals,
             body: FunctionBody {
-                opcodes: vec! [
-                    Opcode::I32Const(42), // 0
-                    Opcode::Jmp(3), // 1
-                    Opcode::I32Const(21), // 2
-                    Opcode::Return // 3
-                ]
+                opcodes: body
             }
         });
         let compiler = Compiler::new(&m, llvm::Context::new()).unwrap();
@@ -460,6 +473,21 @@ mod tests {
         target_module.optimize();
 
         let ee = llvm::ExecutionEngine::new(target_module);
+        ee
+    }
+
+    #[test]
+    fn test_simple_jit() {
+        let ee = build_ee_from_fn_body(
+            Type::Func(vec! [], vec! [ ValType::I32 ]),
+            vec! [],
+            vec! [
+                Opcode::I32Const(42), // 0
+                Opcode::Jmp(3), // 1
+                Opcode::I32Const(21), // 2
+                Opcode::Return // 3
+            ]
+        );
 
         println!("{}", ee.to_string_leaking());
 
@@ -470,5 +498,54 @@ mod tests {
         };
         let ret = f();
         assert_eq!(ret, 42);
+    }
+
+    #[test]
+    fn test_operand_stack_overflow() {
+        let ee = build_ee_from_fn_body(
+            Type::Func(vec! [], vec! [ ValType::I32 ]),
+            vec! [],
+            vec! [
+                Opcode::I32Const(42), // 0
+                Opcode::Jmp(0), // 1
+                Opcode::Return // 2
+            ]
+        );
+
+        println!("{}", ee.to_string_leaking());
+
+        let f: extern "C" fn () -> i64 = unsafe {
+            ::std::mem::transmute(ee.get_function_address(
+                generate_function_name(0).as_str()
+            ).unwrap())
+        };
+        match catch_unwind(AssertUnwindSafe(|| f())) {
+            Ok(_) => panic!("Expecting panic"),
+            Err(_) => {}
+        }
+    }
+
+    #[test]
+    fn test_operand_stack_underflow() {
+        let ee = build_ee_from_fn_body(
+            Type::Func(vec! [], vec! [ ValType::I32 ]),
+            vec! [],
+            vec! [
+                Opcode::Drop, // 0
+                Opcode::Return // 1
+            ]
+        );
+
+        println!("{}", ee.to_string_leaking());
+
+        let f: extern "C" fn () -> i64 = unsafe {
+            ::std::mem::transmute(ee.get_function_address(
+                generate_function_name(0).as_str()
+            ).unwrap())
+        };
+        match catch_unwind(AssertUnwindSafe(|| f())) {
+            Ok(_) => panic!("Expecting panic"),
+            Err(_) => {}
+        }
     }
 }
