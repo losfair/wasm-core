@@ -13,18 +13,72 @@ pub struct Compiler<'a> {
 }
 
 struct CompilerIntrinsics {
-    check_stack: llvm::Function
+    check_stack: llvm::Function,
+    select: llvm::Function
 }
 
 impl CompilerIntrinsics {
     pub fn new(ctx: &llvm::Context, m: &llvm::Module) -> CompilerIntrinsics {
         CompilerIntrinsics {
-            check_stack: Self::build_check_stack(ctx, m)
+            check_stack: Self::build_check_stack(ctx, m),
+            select: Self::build_select(ctx, m)
         }
     }
 
     extern "C" fn stack_check_failed() {
         panic!("Stack check failed");
+    }
+
+    fn build_select(ctx: &llvm::Context, m: &llvm::Module) -> llvm::Function {
+        let f: llvm::Function = llvm::Function::new(
+            ctx,
+            m,
+            "select",
+            llvm::Type::function(
+                ctx,
+                llvm::Type::int64(ctx),
+                &[
+                    llvm::Type::int64(ctx), // condition
+                    llvm::Type::int64(ctx), // if true
+                    llvm::Type::int64(ctx) // if false
+                ]
+            )
+        );
+
+        let initial_bb = llvm::BasicBlock::new(&f);
+        let if_true_bb = llvm::BasicBlock::new(&f);
+        let if_false_bb = llvm::BasicBlock::new(&f);
+
+        unsafe {
+            let builder = initial_bb.builder();
+            let cond = builder.build_icmp(
+                llvm::LLVMIntNE,
+                f.get_param(0),
+                builder.build_const_int(
+                    llvm::Type::int64(ctx),
+                    0,
+                    false
+                )
+            );
+            builder.build_cond_br(
+                cond,
+                &if_true_bb,
+                &if_false_bb
+            );
+        }
+
+        unsafe {
+            let builder = if_true_bb.builder();
+            builder.build_ret(f.get_param(1));
+        }
+
+        unsafe {
+            let builder = if_false_bb.builder();
+            builder.build_ret(f.get_param(2));
+        }
+
+        f.verify();
+        f
     }
 
     fn build_check_stack(ctx: &llvm::Context, m: &llvm::Module) -> llvm::Function {
@@ -333,6 +387,21 @@ impl<'a> Compiler<'a> {
                         Opcode::Drop => {
                             build_stack_pop(&target_bb.builder());
                         },
+                        Opcode::Select => {
+                            let builder = target_bb.builder();
+                            let c = build_stack_pop(&builder);
+                            let val2 = build_stack_pop(&builder);
+                            let val1 = build_stack_pop(&builder);
+                            let v = builder.build_call(
+                                &intrinsics.select,
+                                &[
+                                    c,
+                                    val1,
+                                    val2
+                                ]
+                            );
+                            build_stack_push(&builder, v);
+                        },
                         Opcode::I32Const(v) => {
                             let builder = target_bb.builder();
                             let v = builder.build_cast(
@@ -512,8 +581,6 @@ mod tests {
             ]
         );
 
-        println!("{}", ee.to_string_leaking());
-
         let f: extern "C" fn () -> i64 = unsafe {
             ::std::mem::transmute(ee.get_function_address(
                 generate_function_name(0).as_str()
@@ -536,8 +603,6 @@ mod tests {
             ]
         );
 
-        println!("{}", ee.to_string_leaking());
-
         let f: extern "C" fn () -> i64 = unsafe {
             ::std::mem::transmute(ee.get_function_address(
                 generate_function_name(0).as_str()
@@ -547,5 +612,51 @@ mod tests {
             Ok(_) => panic!("Expecting panic"),
             Err(_) => {}
         }
+    }
+
+    #[test]
+    fn test_select_true() {
+        let ee = build_ee_from_fn_body(
+            Type::Func(vec! [], vec! [ ValType::I32 ]),
+            vec! [],
+            vec! [
+                Opcode::I32Const(1),
+                Opcode::I32Const(2),
+                Opcode::I32Const(1),
+                Opcode::Select,
+                Opcode::Return
+            ]
+        );
+
+        let f: extern "C" fn () -> i64 = unsafe {
+            ::std::mem::transmute(ee.get_function_address(
+                generate_function_name(0).as_str()
+            ).unwrap())
+        };
+        let ret = f();
+        assert_eq!(ret, 1);
+    }
+
+    #[test]
+    fn test_select_false() {
+        let ee = build_ee_from_fn_body(
+            Type::Func(vec! [], vec! [ ValType::I32 ]),
+            vec! [],
+            vec! [
+                Opcode::I32Const(1),
+                Opcode::I32Const(2),
+                Opcode::I32Const(0),
+                Opcode::Select,
+                Opcode::Return
+            ]
+        );
+
+        let f: extern "C" fn () -> i64 = unsafe {
+            ::std::mem::transmute(ee.get_function_address(
+                generate_function_name(0).as_str()
+            ).unwrap())
+        };
+        let ret = f();
+        assert_eq!(ret, 2);
     }
 }
