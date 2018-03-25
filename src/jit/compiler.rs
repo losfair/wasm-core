@@ -177,7 +177,7 @@ impl<'a> Compiler<'a> {
                 &target_functions,
                 FunctionId(i)
             )?;
-            //println!("{}", target_functions[i].to_string_leaking());
+            //println!("{}", target_functions[i].to_string());
             target_functions[i].verify();
         }
 
@@ -256,6 +256,8 @@ impl<'a> Compiler<'a> {
         let initializer_bb = llvm::BasicBlock::new(target_func);
         let stack_base;
         let stack_index;
+        let locals_base;
+        let n_locals = source_func_args_ty.len() + source_func.locals.len();
 
         unsafe {
             let builder = initializer_bb.builder();
@@ -273,6 +275,40 @@ impl<'a> Compiler<'a> {
                 ),
                 stack_index
             );
+            let mut locals_ty_info: Vec<llvm::Type> = source_func_args_ty.iter()
+                .map(|v| v.to_llvm_type(ctx))
+                .collect();
+            locals_ty_info.extend(
+                source_func.locals.iter()
+                    .map(|v| v.to_llvm_type(ctx))
+            );
+            let locals_ty = llvm::Type::struct_type(
+                ctx,
+                &locals_ty_info,
+                false
+            );
+            locals_base = builder.build_alloca(locals_ty);
+
+            for i in 0..source_func_args_ty.len() {
+                builder.build_store(
+                    target_func.get_param(i),
+                    builder.build_gep(
+                        locals_base,
+                        &[
+                            builder.build_const_int(
+                                llvm::Type::int32(ctx),
+                                0,
+                                false
+                            ),
+                            builder.build_const_int(
+                                llvm::Type::int32(ctx),
+                                i as _,
+                                false
+                            )
+                        ]
+                    )
+                );
+            }
         }
 
         let build_stack_pop = |builder: &llvm::Builder| -> llvm::LLVMValueRef {
@@ -374,6 +410,57 @@ impl<'a> Compiler<'a> {
             }
         };
 
+        let build_get_local = |builder: &llvm::Builder, id: usize| -> llvm::LLVMValueRef {
+            if id >= n_locals {
+                panic!("Local index out of bound");
+            }
+            unsafe {
+                builder.build_load(
+                    builder.build_gep(
+                        locals_base,
+                        &[
+                            builder.build_const_int(
+                                llvm::Type::int32(ctx),
+                                0,
+                                false
+                            ),
+                            builder.build_const_int(
+                                llvm::Type::int32(ctx),
+                                id as _,
+                                false
+                            )
+                        ]
+                    )
+                )
+            }
+        };
+
+        let build_set_local = |builder: &llvm::Builder, id: usize, v: llvm::LLVMValueRef| {
+            if id >= n_locals {
+                panic!("Local index out of bound");
+            }
+            unsafe {
+                builder.build_store(
+                    v,
+                    builder.build_gep(
+                        locals_base,
+                        &[
+                            builder.build_const_int(
+                                llvm::Type::int32(ctx),
+                                0,
+                                false
+                            ),
+                            builder.build_const_int(
+                                llvm::Type::int32(ctx),
+                                id as _,
+                                false
+                            )
+                        ]
+                    )
+                )
+            }
+        };
+
         let target_basic_blocks: Vec<llvm::BasicBlock<'_>> = (0..source_cfg.blocks.len())
             .map(|_| llvm::BasicBlock::new(target_func))
             .collect();
@@ -402,6 +489,16 @@ impl<'a> Compiler<'a> {
                             );
                             build_stack_push(&builder, v);
                         },
+                        Opcode::GetLocal(id) => {
+                            let builder = target_bb.builder();
+                            let v = build_get_local(&builder, id as _);
+                            build_stack_push(&builder, v);
+                        },
+                        Opcode::SetLocal(id) => {
+                            let builder = target_bb.builder();
+                            let v = build_stack_pop(&builder);
+                            build_set_local(&builder, id as _, v);
+                        },
                         Opcode::I32Const(v) => {
                             let builder = target_bb.builder();
                             let v = builder.build_cast(
@@ -415,6 +512,30 @@ impl<'a> Compiler<'a> {
                             );
                             build_stack_push(&builder, v);
                         },
+                        Opcode::I32Add => {
+                            let builder = target_bb.builder();
+                            let b = build_stack_pop(&builder);
+                            let a = build_stack_pop(&builder);
+                            build_stack_push(
+                                &builder,
+                                builder.build_cast(
+                                    llvm::LLVMOpcode::LLVMZExt,
+                                    builder.build_add(
+                                        builder.build_cast(
+                                            llvm::LLVMOpcode::LLVMTrunc,
+                                            a,
+                                            llvm::Type::int32(ctx)
+                                        ),
+                                        builder.build_cast(
+                                            llvm::LLVMOpcode::LLVMTrunc,
+                                            b,
+                                            llvm::Type::int32(ctx)
+                                        )
+                                    ),
+                                    llvm::Type::int64(ctx)
+                                )
+                            );
+                        },
                         Opcode::I64Const(v) => {
                             let builder = target_bb.builder();
                             let v = builder.build_const_int(
@@ -423,12 +544,6 @@ impl<'a> Compiler<'a> {
                                 false
                             );
                             build_stack_push(&builder, v);
-                        },
-                        Opcode::I32Add => {
-                            let builder = target_bb.builder();
-                            let b = build_stack_pop(&builder);
-                            let a = build_stack_pop(&builder);
-                            build_stack_push(&builder, builder.build_add(a, b));
                         },
                         _ => panic!("Opcode not implemented: {:?}", op)
                     }
@@ -558,7 +673,7 @@ mod tests {
             ]
         );
 
-        println!("{}", ee.to_string_leaking());
+        println!("{}", ee.to_string());
 
         let f: extern "C" fn () -> i64 = unsafe {
             ::std::mem::transmute(ee.get_function_address(
@@ -658,5 +773,55 @@ mod tests {
         };
         let ret = f();
         assert_eq!(ret, 2);
+    }
+
+    #[test]
+    fn test_get_local() {
+        let ee = build_ee_from_fn_body(
+            Type::Func(vec! [ ValType::I32 ], vec! [ ValType::I32 ]),
+            vec! [],
+            vec! [
+                Opcode::GetLocal(0),
+                Opcode::I32Const(1),
+                Opcode::I32Add,
+                Opcode::Return
+            ]
+        );
+
+        //println!("{}", ee.to_string());
+
+        let f: extern "C" fn (v: i32) -> i64 = unsafe {
+            ::std::mem::transmute(ee.get_function_address(
+                generate_function_name(0).as_str()
+            ).unwrap())
+        };
+        let ret = f(22);
+        assert_eq!(ret, 23);
+    }
+
+    #[test]
+    fn test_set_local() {
+        let ee = build_ee_from_fn_body(
+            Type::Func(vec! [ ValType::I32 ], vec! [ ValType::I32 ]),
+            vec! [
+                ValType::I32
+            ],
+            vec! [
+                Opcode::GetLocal(0),
+                Opcode::SetLocal(1),
+                Opcode::GetLocal(1),
+                Opcode::Return
+            ]
+        );
+
+        //println!("{}", ee.to_string());
+
+        let f: extern "C" fn (v: i32) -> i64 = unsafe {
+            ::std::mem::transmute(ee.get_function_address(
+                generate_function_name(0).as_str()
+            ).unwrap())
+        };
+        let ret = f(22);
+        assert_eq!(ret, 22);
     }
 }

@@ -206,12 +206,14 @@ impl ExecutionEngine {
         }
     }
 
-    pub fn to_string_leaking(&self) -> String {
+    pub fn to_string(&self) -> String {
         unsafe {
+            let raw_s = LLVMPrintModuleToString(self._module_ref);
             let s = CStr::from_ptr(
-                LLVMPrintModuleToString(self._module_ref)
-            ).to_str().unwrap();
-            s.to_string()
+                raw_s
+            ).to_str().unwrap().to_string();
+            LLVMDisposeMessage(raw_s);
+            s
         }
     }
 }
@@ -351,12 +353,14 @@ impl Function {
         }
     }
 
-    pub fn to_string_leaking(&self) -> String {
+    pub fn to_string(&self) -> String {
         unsafe {
+            let raw_s = LLVMPrintValueToString(self._ref);
             let s = CStr::from_ptr(
-                LLVMPrintValueToString(self._ref)
-            ).to_str().unwrap();
-            s.to_string()
+                raw_s
+            ).to_str().unwrap().to_string();
+            LLVMDisposeMessage(raw_s);
+            s
         }
     }
 
