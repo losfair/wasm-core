@@ -790,7 +790,7 @@ mod tests {
 
         //println!("{}", ee.to_string());
 
-        let f: extern "C" fn (v: i32) -> i64 = unsafe {
+        let f: extern "C" fn (v: i64) -> i64 = unsafe {
             ::std::mem::transmute(ee.get_function_address(
                 generate_function_name(0).as_str()
             ).unwrap())
@@ -816,12 +816,48 @@ mod tests {
 
         //println!("{}", ee.to_string());
 
-        let f: extern "C" fn (v: i32) -> i64 = unsafe {
+        let f: extern "C" fn (v: i64) -> i64 = unsafe {
             ::std::mem::transmute(ee.get_function_address(
                 generate_function_name(0).as_str()
             ).unwrap())
         };
         let ret = f(22);
         assert_eq!(ret, 22);
+    }
+
+    #[test]
+    fn test_jmp_table() {
+        let ee = build_ee_from_fn_body(
+            Type::Func(vec! [ ValType::I32 ], vec! [ ValType::I32 ]),
+            vec! [],
+            vec! [
+                Opcode::GetLocal(0), // 0
+                Opcode::JmpTable(vec! [
+                    4,
+                    6,
+                    8
+                ], 2), // 1
+                Opcode::I32Const(-1), // 2
+                Opcode::Return, // 3
+                Opcode::I32Const(11), // 4
+                Opcode::Return, // 5
+                Opcode::I32Const(22), // 6
+                Opcode::Return, // 7
+                Opcode::I32Const(33), // 8
+                Opcode::Return // 9
+            ]
+        );
+
+        //println!("{}", ee.to_string());
+
+        let f: extern "C" fn (v: i64) -> i64 = unsafe {
+            ::std::mem::transmute(ee.get_function_address(
+                generate_function_name(0).as_str()
+            ).unwrap())
+        };
+        assert_eq!(f(0) as i32, 11);
+        assert_eq!(f(1) as i32, 22);
+        assert_eq!(f(2) as i32, 33);
+        assert_eq!(f(99) as i32, -1);
     }
 }
