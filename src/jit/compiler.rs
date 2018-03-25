@@ -489,6 +489,33 @@ impl<'a> Compiler<'a> {
                             );
                             build_stack_push(&builder, v);
                         },
+                        Opcode::Call(id) => {
+                            let builder = target_bb.builder();
+
+                            let f = &source_module.functions[id as usize];
+                            let Type::Func(ref ft_args, ref ft_ret) = source_module.types[f.typeidx as usize];
+                            let target_f = &target_functions[id as usize];
+
+                            let mut call_args: Vec<llvm::LLVMValueRef> = ft_args.iter().rev()
+                                .map(|t| {
+                                    builder.build_bitcast(
+                                        build_stack_pop(&builder),
+                                        t.to_llvm_type(ctx)
+                                    )
+                                })
+                                .collect();
+
+                            call_args.reverse();
+
+                            let ret = builder.build_call(
+                                target_f,
+                                &call_args
+                            );
+
+                            if ft_ret.len() > 0 {
+                                build_stack_push(&builder, ret);
+                            }
+                        },
                         Opcode::GetLocal(id) => {
                             let builder = target_bb.builder();
                             let v = build_get_local(&builder, id as _);
@@ -640,17 +667,21 @@ mod tests {
     use super::*;
     use std::panic::{catch_unwind, AssertUnwindSafe};
 
-    fn build_ee_from_fn_body(ty: Type, locals: Vec<ValType>, body: Vec<Opcode>) -> llvm::ExecutionEngine {
+    fn build_ee_from_fn_bodies(
+        fns: Vec<(Type, Vec<ValType>, Vec<Opcode>)>
+    ) -> llvm::ExecutionEngine {
         let mut m = Module::default();
-        m.types.push(ty);
-        m.functions.push(Function {
-            name: None,
-            typeidx: 0,
-            locals: locals,
-            body: FunctionBody {
-                opcodes: body
-            }
-        });
+        for (i, f) in fns.into_iter().enumerate() {
+            m.types.push(f.0);
+            m.functions.push(Function {
+                name: None,
+                typeidx: i as _,
+                locals: f.1,
+                body: FunctionBody {
+                    opcodes: f.2
+                }
+            });
+        }
         let compiler = Compiler::new(&m, llvm::Context::new()).unwrap();
         let target_module = compiler.compile().unwrap();
 
@@ -658,6 +689,12 @@ mod tests {
 
         let ee = llvm::ExecutionEngine::new(target_module);
         ee
+    }
+
+    fn build_ee_from_fn_body(ty: Type, locals: Vec<ValType>, body: Vec<Opcode>) -> llvm::ExecutionEngine {
+        build_ee_from_fn_bodies(
+            vec! [ (ty, locals, body) ]
+        )
     }
 
     #[test]
@@ -859,5 +896,44 @@ mod tests {
         assert_eq!(f(1) as i32, 22);
         assert_eq!(f(2) as i32, 33);
         assert_eq!(f(99) as i32, -1);
+    }
+
+    #[test]
+    fn test_call() {
+        let ee = build_ee_from_fn_bodies(
+            vec! [
+                (
+                    Type::Func(vec! [ ValType::I32 ], vec! [ ValType::I32 ] ),
+                    vec! [],
+                    vec! [
+                        Opcode::GetLocal(0),
+                        Opcode::I32Const(5),
+                        Opcode::Call(1),
+                        Opcode::Return
+                    ]
+                ),
+                (
+                    Type::Func(vec! [ ValType::I32, ValType::I32 ], vec! [ ValType::I32 ] ),
+                    vec! [],
+                    vec! [
+                        Opcode::GetLocal(0),
+                        Opcode::GetLocal(1),
+                        Opcode::GetLocal(1),
+                        Opcode::I32Add,
+                        Opcode::I32Add,
+                        Opcode::Return // Local(0) + Local(1) * 2
+                    ]
+                )
+            ]
+        );
+
+        println!("{}", ee.to_string());
+
+        let f: extern "C" fn (v: i64) -> i64 = unsafe {
+            ::std::mem::transmute(ee.get_function_address(
+                generate_function_name(0).as_str()
+            ).unwrap())
+        };
+        assert_eq!(f(35), 45);
     }
 }

@@ -628,6 +628,19 @@ impl<'a> Builder<'a> {
         }
         s
     }
+
+    pub unsafe fn build_bitcast(
+        &self,
+        v: LLVMValueRef,
+        dest_ty: Type
+    ) -> LLVMValueRef {
+        LLVMBuildBitCast(
+            self._ref,
+            v,
+            dest_ty._ref,
+            empty_cstr()
+        )
+    }
 }
 
 impl<'a> Drop for Builder<'a> {
