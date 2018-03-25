@@ -555,6 +555,19 @@ impl<'a> Builder<'a> {
         )
     }
 
+    pub unsafe fn build_and(
+        &self,
+        lhs: LLVMValueRef,
+        rhs: LLVMValueRef
+    ) -> LLVMValueRef {
+        LLVMBuildAnd(
+            self._ref,
+            lhs,
+            rhs,
+            empty_cstr()
+        )
+    }
+
     pub unsafe fn build_or(
         &self,
         lhs: LLVMValueRef,
@@ -581,6 +594,45 @@ impl<'a> Builder<'a> {
         )
     }
 
+    pub unsafe fn build_shl(
+        &self,
+        lhs: LLVMValueRef,
+        rhs: LLVMValueRef
+    ) -> LLVMValueRef {
+        LLVMBuildShl(
+            self._ref,
+            lhs,
+            rhs,
+            empty_cstr()
+        )
+    }
+
+    pub unsafe fn build_ashr(
+        &self,
+        lhs: LLVMValueRef,
+        rhs: LLVMValueRef
+    ) -> LLVMValueRef {
+        LLVMBuildAShr(
+            self._ref,
+            lhs,
+            rhs,
+            empty_cstr()
+        )
+    }
+
+    pub unsafe fn build_lshr(
+        &self,
+        lhs: LLVMValueRef,
+        rhs: LLVMValueRef
+    ) -> LLVMValueRef {
+        LLVMBuildLShr(
+            self._ref,
+            lhs,
+            rhs,
+            empty_cstr()
+        )
+    }
+
     pub unsafe fn build_add(
         &self,
         lhs: LLVMValueRef,
@@ -600,6 +652,71 @@ impl<'a> Builder<'a> {
         rhs: LLVMValueRef
     ) -> LLVMValueRef {
         LLVMBuildSub(
+            self._ref,
+            lhs,
+            rhs,
+            empty_cstr()
+        )
+    }
+
+    pub unsafe fn build_mul(
+        &self,
+        lhs: LLVMValueRef,
+        rhs: LLVMValueRef
+    ) -> LLVMValueRef {
+        LLVMBuildMul(
+            self._ref,
+            lhs,
+            rhs,
+            empty_cstr()
+        )
+    }
+
+    pub unsafe fn build_udiv(
+        &self,
+        lhs: LLVMValueRef,
+        rhs: LLVMValueRef
+    ) -> LLVMValueRef {
+        LLVMBuildUDiv(
+            self._ref,
+            lhs,
+            rhs,
+            empty_cstr()
+        )
+    }
+
+    pub unsafe fn build_sdiv(
+        &self,
+        lhs: LLVMValueRef,
+        rhs: LLVMValueRef
+    ) -> LLVMValueRef {
+        LLVMBuildSDiv(
+            self._ref,
+            lhs,
+            rhs,
+            empty_cstr()
+        )
+    }
+
+    pub unsafe fn build_urem(
+        &self,
+        lhs: LLVMValueRef,
+        rhs: LLVMValueRef
+    ) -> LLVMValueRef {
+        LLVMBuildURem(
+            self._ref,
+            lhs,
+            rhs,
+            empty_cstr()
+        )
+    }
+
+    pub unsafe fn build_srem(
+        &self,
+        lhs: LLVMValueRef,
+        rhs: LLVMValueRef
+    ) -> LLVMValueRef {
+        LLVMBuildSRem(
             self._ref,
             lhs,
             rhs,

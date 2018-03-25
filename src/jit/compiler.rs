@@ -361,6 +361,16 @@ impl<'a> Compiler<'a> {
             }
         };
 
+        let build_stack_pop_i32 = |builder: &llvm::Builder| -> llvm::LLVMValueRef {
+            unsafe {
+                builder.build_cast(
+                    llvm::LLVMOpcode::LLVMTrunc,
+                    build_stack_pop(builder),
+                    llvm::Type::int32(ctx)
+                )
+            }
+        };
+
         let build_stack_push = |builder: &llvm::Builder, v: llvm::LLVMValueRef| {
             unsafe {
                 let cur_stack_index = builder.build_load(
@@ -407,6 +417,19 @@ impl<'a> Compiler<'a> {
                     ),
                     stack_index
                 );
+            }
+        };
+
+        let build_stack_push_i32 = |builder: &llvm::Builder, v: llvm::LLVMValueRef| {
+            unsafe {
+                build_stack_push(
+                    builder,
+                    builder.build_cast(
+                        llvm::LLVMOpcode::LLVMZExt,
+                        v,
+                        llvm::Type::int64(ctx)
+                    )
+                )
             }
         };
 
@@ -461,6 +484,70 @@ impl<'a> Compiler<'a> {
             }
         };
 
+        let build_i32_binop = |
+            builder: &llvm::Builder,
+            op: &Fn(&llvm::Builder, llvm::LLVMValueRef, llvm::LLVMValueRef) -> llvm::LLVMValueRef
+        | {
+            unsafe {
+                let b = build_stack_pop_i32(&builder);
+                let a = build_stack_pop_i32(&builder);
+                build_stack_push_i32(
+                    &builder,
+                    op(builder, a, b)
+                );
+            }
+        };
+
+        let build_i32_relop = |
+            builder: &llvm::Builder,
+            op: &Fn(&llvm::Builder, llvm::LLVMValueRef, llvm::LLVMValueRef) -> llvm::LLVMValueRef
+        | {
+            unsafe {
+                let b = build_stack_pop_i32(&builder);
+                let a = build_stack_pop_i32(&builder);
+                build_stack_push(
+                    &builder,
+                    builder.build_cast(
+                        llvm::LLVMOpcode::LLVMZExt,
+                        op(builder, a, b),
+                        llvm::Type::int64(ctx)
+                    )
+                );
+            }
+        };
+
+        let build_i64_binop = |
+            builder: &llvm::Builder,
+            op: &Fn(&llvm::Builder, llvm::LLVMValueRef, llvm::LLVMValueRef) -> llvm::LLVMValueRef
+        | {
+            unsafe {
+                let b = build_stack_pop(&builder);
+                let a = build_stack_pop(&builder);
+                build_stack_push(
+                    &builder,
+                    op(builder, a, b)
+                );
+            }
+        };
+
+        let build_i64_relop = |
+            builder: &llvm::Builder,
+            op: &Fn(&llvm::Builder, llvm::LLVMValueRef, llvm::LLVMValueRef) -> llvm::LLVMValueRef
+        | {
+            unsafe {
+                let b = build_stack_pop(&builder);
+                let a = build_stack_pop(&builder);
+                build_stack_push(
+                    &builder,
+                    builder.build_cast(
+                        llvm::LLVMOpcode::LLVMZExt,
+                        op(builder, a, b),
+                        llvm::Type::int64(ctx)
+                    )
+                );
+            }
+        };
+
         let target_basic_blocks: Vec<llvm::BasicBlock<'_>> = (0..source_cfg.blocks.len())
             .map(|_| llvm::BasicBlock::new(target_func))
             .collect();
@@ -471,6 +558,7 @@ impl<'a> Compiler<'a> {
             for op in &bb.opcodes {
                 unsafe {
                     match *op {
+                        Opcode::Nop => {},
                         Opcode::Drop => {
                             build_stack_pop(&target_bb.builder());
                         },
@@ -540,26 +628,173 @@ impl<'a> Compiler<'a> {
                             build_stack_push(&builder, v);
                         },
                         Opcode::I32Add => {
+                            build_i32_binop(
+                                &target_bb.builder(),
+                                &|t, a, b| t.build_add(a, b)
+                            );
+                        },
+                        Opcode::I32Sub => {
+                            build_i32_binop(
+                                &target_bb.builder(),
+                                &|t, a, b| t.build_sub(a, b)
+                            );
+                        },
+                        Opcode::I32Mul => {
+                            build_i32_binop(
+                                &target_bb.builder(),
+                                &|t, a, b| t.build_mul(a, b)
+                            );
+                        },
+                        Opcode::I32DivU => {
+                            build_i32_binop(
+                                &target_bb.builder(),
+                                &|t, a, b| t.build_udiv(a, b)
+                            );
+                        },
+                        Opcode::I32DivS => {
+                            build_i32_binop(
+                                &target_bb.builder(),
+                                &|t, a, b| t.build_sdiv(a, b)
+                            );
+                        },
+                        Opcode::I32RemU => {
+                            build_i32_binop(
+                                &target_bb.builder(),
+                                &|t, a, b| t.build_urem(a, b)
+                            );
+                        },
+                        Opcode::I32RemS => {
+                            build_i32_binop(
+                                &target_bb.builder(),
+                                &|t, a, b| t.build_srem(a, b)
+                            );
+                        },
+                        Opcode::I32Shl => {
+                            build_i32_binop(
+                                &target_bb.builder(),
+                                &|t, a, b| t.build_shl(a, b)
+                            );
+                        },
+                        Opcode::I32ShrU => {
+                            build_i32_binop(
+                                &target_bb.builder(),
+                                &|t, a, b| t.build_lshr(a, b)
+                            );
+                        },
+                        Opcode::I32ShrS => {
+                            build_i32_binop(
+                                &target_bb.builder(),
+                                &|t, a, b| t.build_ashr(a, b)
+                            );
+                        },
+                        Opcode::I32Eq => {
+                            build_i32_relop(
+                                &target_bb.builder(),
+                                &|t, a, b| t.build_icmp(
+                                    llvm::LLVMIntEQ,
+                                    a,
+                                    b
+                                )
+                            );
+                        },
+                        Opcode::I32Ne => {
+                            build_i32_relop(
+                                &target_bb.builder(),
+                                &|t, a, b| t.build_icmp(
+                                    llvm::LLVMIntNE,
+                                    a,
+                                    b
+                                )
+                            );
+                        },
+                        Opcode::I32LtU => {
+                            build_i32_relop(
+                                &target_bb.builder(),
+                                &|t, a, b| t.build_icmp(
+                                    llvm::LLVMIntULT,
+                                    a,
+                                    b
+                                )
+                            );
+                        },
+                        Opcode::I32LtS => {
+                            build_i32_relop(
+                                &target_bb.builder(),
+                                &|t, a, b| t.build_icmp(
+                                    llvm::LLVMIntSLT,
+                                    a,
+                                    b
+                                )
+                            );
+                        },
+                        Opcode::I32LeU => {
+                            build_i32_relop(
+                                &target_bb.builder(),
+                                &|t, a, b| t.build_icmp(
+                                    llvm::LLVMIntULE,
+                                    a,
+                                    b
+                                )
+                            );
+                        },
+                        Opcode::I32LeS => {
+                            build_i32_relop(
+                                &target_bb.builder(),
+                                &|t, a, b| t.build_icmp(
+                                    llvm::LLVMIntSLE,
+                                    a,
+                                    b
+                                )
+                            );
+                        },
+                        Opcode::I32GtU => {
+                            build_i32_relop(
+                                &target_bb.builder(),
+                                &|t, a, b| t.build_icmp(
+                                    llvm::LLVMIntUGT,
+                                    a,
+                                    b
+                                )
+                            );
+                        },
+                        Opcode::I32GtS => {
+                            build_i32_relop(
+                                &target_bb.builder(),
+                                &|t, a, b| t.build_icmp(
+                                    llvm::LLVMIntSGT,
+                                    a,
+                                    b
+                                )
+                            );
+                        },
+                        Opcode::I32GeU => {
+                            build_i32_relop(
+                                &target_bb.builder(),
+                                &|t, a, b| t.build_icmp(
+                                    llvm::LLVMIntUGE,
+                                    a,
+                                    b
+                                )
+                            );
+                        },
+                        Opcode::I32GeS => {
+                            build_i32_relop(
+                                &target_bb.builder(),
+                                &|t, a, b| t.build_icmp(
+                                    llvm::LLVMIntSGE,
+                                    a,
+                                    b
+                                )
+                            );
+                        },
+                        Opcode::I32WrapI64 => {
                             let builder = target_bb.builder();
-                            let b = build_stack_pop(&builder);
-                            let a = build_stack_pop(&builder);
-                            build_stack_push(
+                            build_stack_push_i32(
                                 &builder,
                                 builder.build_cast(
-                                    llvm::LLVMOpcode::LLVMZExt,
-                                    builder.build_add(
-                                        builder.build_cast(
-                                            llvm::LLVMOpcode::LLVMTrunc,
-                                            a,
-                                            llvm::Type::int32(ctx)
-                                        ),
-                                        builder.build_cast(
-                                            llvm::LLVMOpcode::LLVMTrunc,
-                                            b,
-                                            llvm::Type::int32(ctx)
-                                        )
-                                    ),
-                                    llvm::Type::int64(ctx)
+                                    llvm::LLVMOpcode::LLVMTrunc,
+                                    build_stack_pop(&builder),
+                                    llvm::Type::int32(ctx)
                                 )
                             );
                         },
@@ -896,6 +1131,30 @@ mod tests {
         assert_eq!(f(1) as i32, 22);
         assert_eq!(f(2) as i32, 33);
         assert_eq!(f(99) as i32, -1);
+    }
+
+    #[test]
+    fn test_i32_wrap_i64() {
+        let ee = build_ee_from_fn_body(
+            Type::Func(vec! [ ValType::I64 ], vec! [ ValType::I32 ]),
+            vec! [],
+            vec! [
+                Opcode::GetLocal(0),
+                Opcode::I32WrapI64,
+                Opcode::Return
+            ]
+        );
+
+        //println!("{}", ee.to_string());
+
+        let f: extern "C" fn (v: i64) -> i64 = unsafe {
+            ::std::mem::transmute(ee.get_function_address(
+                generate_function_name(0).as_str()
+            ).unwrap())
+        };
+        let ret = f(939230566849);
+        assert_eq!(ret as i32, -1367270975);
+        assert_eq!(ret, 2927696321);
     }
 
     #[test]
