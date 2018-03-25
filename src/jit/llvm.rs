@@ -108,11 +108,13 @@ impl Module {
                 let pmb = LLVMPassManagerBuilderCreate();
 
                 LLVMPassManagerBuilderSetOptLevel(pmb, 3);
+                LLVMPassManagerBuilderUseInlinerWithThreshold(pmb, 1000);
                 LLVMPassManagerBuilderPopulateModulePassManager(pmb, pm);
 
                 LLVMPassManagerBuilderDispose(pmb);
             }
 
+            LLVMRunPassManager(pm, self.inner._ref);
             LLVMRunPassManager(pm, self.inner._ref);
 
             LLVMDisposePassManager(pm);
