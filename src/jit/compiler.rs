@@ -1,7 +1,10 @@
+use std::rc::Rc;
+use std::ops::Deref;
 use module::*;
 use cfgraph::*;
 use super::llvm;
 use opcode::Opcode;
+use super::runtime::{Runtime, RuntimeConfig};
 
 fn generate_function_name(id: usize) -> String {
     format!("Wfunc_{}", id)
@@ -9,24 +12,31 @@ fn generate_function_name(id: usize) -> String {
 
 pub struct Compiler<'a> {
     _context: llvm::Context,
-    source_module: &'a Module
+    source_module: &'a Module,
+    rt: Rc<Runtime>
 }
 
 struct CompilerIntrinsics {
     check_stack: llvm::Function,
-    select: llvm::Function
+    select: llvm::Function,
+    translate_pointer: llvm::Function
 }
 
 impl CompilerIntrinsics {
-    pub fn new(ctx: &llvm::Context, m: &llvm::Module) -> CompilerIntrinsics {
+    pub fn new(ctx: &llvm::Context, m: &llvm::Module, rt: &Runtime) -> CompilerIntrinsics {
         CompilerIntrinsics {
             check_stack: Self::build_check_stack(ctx, m),
-            select: Self::build_select(ctx, m)
+            select: Self::build_select(ctx, m),
+            translate_pointer: Self::build_translate_pointer(ctx, m, rt)
         }
     }
 
     extern "C" fn stack_check_failed() {
         panic!("Stack check failed");
+    }
+
+    extern "C" fn mem_bounds_check_failed() {
+        panic!("Memory bounds check failed");
     }
 
     fn build_select(ctx: &llvm::Context, m: &llvm::Module) -> llvm::Function {
@@ -75,6 +85,135 @@ impl CompilerIntrinsics {
         unsafe {
             let builder = if_false_bb.builder();
             builder.build_ret(f.get_param(2));
+        }
+
+        f.verify();
+        f
+    }
+
+    fn build_translate_pointer(ctx: &llvm::Context, m: &llvm::Module, rt: &Runtime) -> llvm::Function {
+        let f: llvm::Function = llvm::Function::new(
+            ctx,
+            m,
+            "translate_pointer",
+            llvm::Type::function(
+                ctx,
+                llvm::Type::pointer(llvm::Type::void(ctx)),
+                &[
+                    llvm::Type::int64(ctx), // virtual address
+                    llvm::Type::int64(ctx) // read / write length (trusted)
+                ]
+            )
+        );
+
+        let jit_info = unsafe {
+            &mut *rt.get_jit_info()
+        };
+        let mem_begin_ptr = &mut jit_info.mem_begin as *mut *mut u8;
+        let mem_len_ptr = &mut jit_info.mem_len as *mut usize;
+
+        let initial_bb = llvm::BasicBlock::new(&f);
+        let ok_bb = llvm::BasicBlock::new(&f);
+        let failed_bb = llvm::BasicBlock::new(&f);
+
+        let mut vaddr = unsafe { f.get_param(0) };
+        let mut access_len = unsafe { f.get_param(1) };
+
+        unsafe {
+            let builder = initial_bb.builder();
+
+            // If we are on a 32-bit system...
+            if llvm::NativePointerWidth::detect() == llvm::NativePointerWidth::W32 {
+                vaddr = builder.build_cast(
+                    llvm::LLVMOpcode::LLVMTrunc,
+                    vaddr,
+                    llvm::Type::int32(ctx)
+                );
+                access_len = builder.build_cast(
+                    llvm::LLVMOpcode::LLVMTrunc,
+                    access_len,
+                    llvm::Type::int32(ctx)
+                );
+            }
+
+            let mem_len = builder.build_load(
+                builder.build_cast(
+                    llvm::LLVMOpcode::LLVMIntToPtr,
+                    builder.build_const_int(
+                        llvm::Type::int64(ctx),
+                        mem_len_ptr as usize as _,
+                        false
+                    ),
+                    llvm::Type::pointer(llvm::Type::int_native(ctx))
+                )
+            );
+
+            let access_end = builder.build_add(
+                vaddr,
+                access_len
+            );
+
+            // Double check for overflow (?)
+            let cmp_ok_1 = builder.build_icmp(
+                llvm::LLVMIntULT,
+                vaddr,
+                mem_len
+            );
+            let cmp_ok_2 = builder.build_icmp(
+                llvm::LLVMIntULE,
+                access_end,
+                mem_len
+            );
+            let cmp_ok = builder.build_and(cmp_ok_1, cmp_ok_2);
+
+            builder.build_cond_br(cmp_ok, &ok_bb, &failed_bb);
+        }
+
+        unsafe {
+            let builder = ok_bb.builder();
+            let mem_begin = builder.build_load(
+                builder.build_cast(
+                    llvm::LLVMOpcode::LLVMIntToPtr,
+                    builder.build_const_int(
+                        llvm::Type::int64(ctx),
+                        mem_begin_ptr as usize as _,
+                        false
+                    ),
+                    llvm::Type::pointer(llvm::Type::int_native(ctx))
+                )
+            );
+            let real_addr = builder.build_add(
+                mem_begin,
+                vaddr
+            );
+            builder.build_ret(
+                builder.build_cast(
+                    llvm::LLVMOpcode::LLVMIntToPtr,
+                    real_addr,
+                    llvm::Type::pointer(llvm::Type::void(ctx))
+                )
+            );
+        }
+
+        unsafe {
+            let builder = failed_bb.builder();
+            let call_target = builder.build_cast(
+                llvm::LLVMOpcode::LLVMIntToPtr,
+                builder.build_const_int(
+                    llvm::Type::int64(ctx),
+                    (Self::mem_bounds_check_failed as usize) as u64,
+                    false
+                ),
+                llvm::Type::pointer(
+                    llvm::Type::function(
+                        ctx,
+                        llvm::Type::void(ctx),
+                        &[]
+                    )
+                )
+            );
+            builder.build_call_raw(call_target, &[]);
+            builder.build_unreachable();
         }
 
         f.verify();
@@ -150,17 +289,29 @@ impl CompilerIntrinsics {
 
 struct FunctionId(usize);
 
+pub struct CompiledModule {
+    rt: Rc<Runtime>,
+    module: llvm::Module
+}
+
 impl<'a> Compiler<'a> {
     pub fn new(m: &'a Module, ctx: llvm::Context) -> OptimizeResult<Compiler<'a>> {
+        Self::with_runtime(m, ctx, Rc::new(Runtime::new(RuntimeConfig::default())))
+    }
+
+    pub fn with_runtime(m: &'a Module, ctx: llvm::Context, rt: Rc<Runtime>) -> OptimizeResult<Compiler<'a>> {
         Ok(Compiler {
             _context: ctx.clone(),
-            source_module: m
+            source_module: m,
+            rt: rt
         })
     }
 
-    pub fn compile(&self) -> OptimizeResult<llvm::Module> {
+    pub fn compile(&self) -> OptimizeResult<CompiledModule> {
         let target_module = llvm::Module::new(&self._context, "".into());
-        let intrinsics = CompilerIntrinsics::new(&self._context, &target_module);
+        let target_runtime = self.rt.clone();
+
+        let intrinsics = CompilerIntrinsics::new(&self._context, &target_module, &*self.rt);
 
         let target_functions: Vec<llvm::Function> = Self::gen_function_defs(
             &self._context,
@@ -171,6 +322,7 @@ impl<'a> Compiler<'a> {
         for i in 0..target_functions.len() {
             Self::gen_function_body(
                 &self._context,
+                &self.rt,
                 &intrinsics,
                 self.source_module,
                 &target_module,
@@ -181,7 +333,10 @@ impl<'a> Compiler<'a> {
             target_functions[i].verify();
         }
 
-        Ok(target_module)
+        Ok(CompiledModule {
+            rt: target_runtime,
+            module: target_module
+        })
     }
 
     fn gen_function_defs(
@@ -228,12 +383,17 @@ impl<'a> Compiler<'a> {
 
     fn gen_function_body(
         ctx: &llvm::Context,
+        rt: &Rc<Runtime>,
         intrinsics: &CompilerIntrinsics,
         source_module: &Module,
         target_module: &llvm::Module,
         target_functions: &[llvm::Function],
         this_function: FunctionId
     ) -> OptimizeResult<()> {
+        extern "C" fn _grow_memory(rt: &Runtime, len_inc: usize) {
+            rt.grow_memory(len_inc);
+        }
+
         const STACK_SIZE: usize = 32;
         const TAG_I32: i32 = 0x01;
         const TAG_I64: i32 = 0x02;
@@ -545,6 +705,93 @@ impl<'a> Compiler<'a> {
                         llvm::Type::int64(ctx)
                     )
                 );
+            }
+        };
+
+        let build_std_zext = |
+            builder: &llvm::Builder,
+            v: llvm::LLVMValueRef
+        | -> llvm::LLVMValueRef {
+            unsafe {
+                builder.build_cast(
+                    llvm::LLVMOpcode::LLVMZExt,
+                    v,
+                    llvm::Type::int64(ctx)
+                )
+            }
+        };
+
+        let build_std_sext = |
+            builder: &llvm::Builder,
+            v: llvm::LLVMValueRef
+        | -> llvm::LLVMValueRef {
+            unsafe {
+                builder.build_cast(
+                    llvm::LLVMOpcode::LLVMSExt,
+                    v,
+                    llvm::Type::int64(ctx)
+                )
+            }
+        };
+
+        let build_i32_load = |
+            builder: &llvm::Builder,
+            trusted_len: usize,
+            signed: bool,
+            ptr: llvm::LLVMValueRef
+        | -> llvm::LLVMValueRef {
+            unsafe {
+                let real_addr = builder.build_call(
+                    &intrinsics.translate_pointer,
+                    &[
+                        ptr,
+                        builder.build_const_int(
+                            llvm::Type::int64(ctx),
+                            trusted_len as _,
+                            false
+                        )
+                    ]
+                );
+                let build_ext: &Fn(&llvm::Builder, llvm::LLVMValueRef) -> llvm::LLVMValueRef =
+                    if signed {
+                        &build_std_sext
+                    } else {
+                        &build_std_zext
+                    };
+
+                if trusted_len == 4 {
+                    build_ext(
+                        builder,
+                        builder.build_load(
+                            builder.build_bitcast(
+                                real_addr,
+                                llvm::Type::pointer(llvm::Type::int32(ctx))
+                            )
+                        )
+                    )
+                } else if trusted_len == 2 {
+                    build_ext(
+                        builder,
+                        builder.build_load(
+                            builder.build_bitcast(
+                                real_addr,
+                                llvm::Type::pointer(llvm::Type::int16(ctx))
+                            )
+                        )
+                    )
+                } else if trusted_len == 1 {
+                    build_ext(
+                        builder,
+                        builder.build_load(
+                            builder.build_bitcast(
+                                real_addr,
+                                llvm::Type::pointer(llvm::Type::int8(ctx))
+                            )
+                        )
+                    )
+                } else {
+                    panic!("Unknown trusted length: {}", trusted_len);
+                }
             }
         };
 
@@ -920,9 +1167,10 @@ mod tests {
         let compiler = Compiler::new(&m, llvm::Context::new()).unwrap();
         let target_module = compiler.compile().unwrap();
 
-        target_module.optimize();
+        target_module.module.optimize();
 
-        let ee = llvm::ExecutionEngine::new(target_module);
+        // FIXME: This is incorrect: Runtime should not be dropped
+        let ee = llvm::ExecutionEngine::new(target_module.module);
         ee
     }
 

@@ -250,6 +250,27 @@ impl Type {
         }
     }
 
+    pub fn int_native(ctx: &Context) -> Type {
+        match NativePointerWidth::detect() {
+            NativePointerWidth::W32 => Self::int32(ctx),
+            NativePointerWidth::W64 => Self::int64(ctx)
+        }
+    }
+
+    pub fn int8(ctx: &Context) -> Type {
+        Type {
+            _context: ctx.clone(),
+            _ref: unsafe { LLVMInt8TypeInContext(ctx.inner._ref) }
+        }
+    }
+
+    pub fn int16(ctx: &Context) -> Type {
+        Type {
+            _context: ctx.clone(),
+            _ref: unsafe { LLVMInt16TypeInContext(ctx.inner._ref) }
+        }
+    }
+
     pub fn int32(ctx: &Context) -> Type {
         Type {
             _context: ctx.clone(),
@@ -555,6 +576,10 @@ impl<'a> Builder<'a> {
         )
     }
 
+    pub unsafe fn build_unreachable(&self) -> LLVMValueRef {
+        LLVMBuildUnreachable(self._ref)
+    }
+
     pub unsafe fn build_and(
         &self,
         lhs: LLVMValueRef,
@@ -764,6 +789,25 @@ impl<'a> Drop for Builder<'a> {
     fn drop(&mut self) {
         unsafe {
             LLVMDisposeBuilder(self._ref);
+        }
+    }
+}
+
+#[derive(Eq, PartialEq)]
+pub enum NativePointerWidth {
+    W32,
+    W64
+}
+
+impl NativePointerWidth {
+    pub fn detect() -> NativePointerWidth {
+        let size = ::std::mem::size_of::<usize>();
+        if size == 4 {
+            NativePointerWidth::W32
+        } else if size == 8 {
+            NativePointerWidth::W64
+        } else {
+            panic!("Unsupported native pointer width: {}", size);
         }
     }
 }
