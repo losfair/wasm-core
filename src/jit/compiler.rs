@@ -1366,6 +1366,7 @@ impl ValType {
 mod tests {
     use super::*;
     use std::panic::{catch_unwind, AssertUnwindSafe};
+    use test::Bencher;
 
     fn build_module_from_fn_bodies(
         fns: Vec<(Type, Vec<ValType>, Vec<Opcode>)>
@@ -1409,6 +1410,45 @@ mod tests {
         build_ee_from_fn_bodies(
             vec! [ (ty, locals, body) ]
         )
+    }
+
+    #[bench]
+    fn bench_simple_jit_compile(b: &mut Bencher) {
+        b.iter(|| {
+            let _ = build_ee_from_fn_body(
+                Type::Func(vec! [], vec! [ ValType::I32 ]),
+                vec! [],
+                vec! [
+                    Opcode::I32Const(42), // 0
+                    Opcode::Jmp(3), // 1
+                    Opcode::I32Const(21), // 2
+                    Opcode::Return // 3
+                ]
+            );
+        });
+    }
+
+    #[test]
+    fn test_concurrent_jit_compile() {
+        let threads: Vec<::std::thread::JoinHandle<()>> = (0..8).map(|_| {
+            ::std::thread::spawn(|| {
+                for _ in 0..1000 {
+                    let _ = build_ee_from_fn_body(
+                        Type::Func(vec! [], vec! [ ValType::I32 ]),
+                        vec! [],
+                        vec! [
+                            Opcode::I32Const(42), // 0
+                            Opcode::Jmp(3), // 1
+                            Opcode::I32Const(21), // 2
+                            Opcode::Return // 3
+                        ]
+                    );
+                }
+            })
+        }).collect();
+        for t in threads {
+            t.join().unwrap();
+        }
     }
 
     #[test]

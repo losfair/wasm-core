@@ -4,6 +4,10 @@
 #![feature(nll)]
 #![feature(core_intrinsics)]
 #![feature(underscore_lifetimes)]
+#![feature(test)]
+
+#[cfg(test)]
+extern crate test;
 
 #[cfg(not(feature = "std"))]
 #[macro_use]
