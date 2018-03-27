@@ -824,27 +824,27 @@ impl<'a> VirtualMachine<'a> {
                 },
                 Opcode::I32Load(ref m) => {
                     let i = frame.pop_operand()?.get_i32()? as u32;
-                    let v = int_ops::i32_load(i, m, &mut self.rt.mem, 4)?;
+                    let v = int_ops::i32_load_u(i, m, &mut self.rt.mem, 4)?;
                     frame.push_operand(v);
                 },
                 Opcode::I32Load8U(ref m) => {
                     let i = frame.pop_operand()?.get_i32()? as u32;
-                    let v = int_ops::i32_load(i, m, &mut self.rt.mem, 1)?;
+                    let v = int_ops::i32_load_u(i, m, &mut self.rt.mem, 1)?;
                     frame.push_operand(v);
                 },
                 Opcode::I32Load8S(ref m) => {
                     let i = frame.pop_operand()?.get_i32()? as u32;
-                    let v = int_ops::i32_load(i, m, &mut self.rt.mem, 1)?;
+                    let v = int_ops::i32_load_s(i, m, &mut self.rt.mem, 1)?;
                     frame.push_operand(v);
                 },
                 Opcode::I32Load16U(ref m) => {
                     let i = frame.pop_operand()?.get_i32()? as u32;
-                    let v = int_ops::i32_load(i, m, &mut self.rt.mem, 2)?;
+                    let v = int_ops::i32_load_u(i, m, &mut self.rt.mem, 2)?;
                     frame.push_operand(v);
                 },
                 Opcode::I32Load16S(ref m) => {
                     let i = frame.pop_operand()?.get_i32()? as u32;
-                    let v = int_ops::i32_load(i, m, &mut self.rt.mem, 2)?;
+                    let v = int_ops::i32_load_s(i, m, &mut self.rt.mem, 2)?;
                     frame.push_operand(v);
                 },
                 Opcode::I32Store(ref m) => {
@@ -1016,37 +1016,37 @@ impl<'a> VirtualMachine<'a> {
                 },
                 Opcode::I64Load(ref m) => {
                     let i = frame.pop_operand()?.get_i32()? as u32;
-                    let v = int_ops::i64_load(i, m, &mut self.rt.mem, 8)?;
+                    let v = int_ops::i64_load_u(i, m, &mut self.rt.mem, 8)?;
                     frame.push_operand(v);
                 },
                 Opcode::I64Load8U(ref m) => {
                     let i = frame.pop_operand()?.get_i32()? as u32;
-                    let v = int_ops::i64_load(i, m, &mut self.rt.mem, 1)?;
+                    let v = int_ops::i64_load_u(i, m, &mut self.rt.mem, 1)?;
                     frame.push_operand(v);
                 },
                 Opcode::I64Load8S(ref m) => {
                     let i = frame.pop_operand()?.get_i32()? as u32;
-                    let v = int_ops::i64_load(i, m, &mut self.rt.mem, 1)?;
+                    let v = int_ops::i64_load_s(i, m, &mut self.rt.mem, 1)?;
                     frame.push_operand(v);
                 },
                 Opcode::I64Load16U(ref m) => {
                     let i = frame.pop_operand()?.get_i32()? as u32;
-                    let v = int_ops::i64_load(i, m, &mut self.rt.mem, 2)?;
+                    let v = int_ops::i64_load_u(i, m, &mut self.rt.mem, 2)?;
                     frame.push_operand(v);
                 },
                 Opcode::I64Load16S(ref m) => {
                     let i = frame.pop_operand()?.get_i32()? as u32;
-                    let v = int_ops::i64_load(i, m, &mut self.rt.mem, 2)?;
+                    let v = int_ops::i64_load_s(i, m, &mut self.rt.mem, 2)?;
                     frame.push_operand(v);
                 },
                 Opcode::I64Load32U(ref m) => {
                     let i = frame.pop_operand()?.get_i32()? as u32;
-                    let v = int_ops::i64_load(i, m, &mut self.rt.mem, 4)?;
+                    let v = int_ops::i64_load_u(i, m, &mut self.rt.mem, 4)?;
                     frame.push_operand(v);
                 },
                 Opcode::I64Load32S(ref m) => {
                     let i = frame.pop_operand()?.get_i32()? as u32;
-                    let v = int_ops::i64_load(i, m, &mut self.rt.mem, 4)?;
+                    let v = int_ops::i64_load_s(i, m, &mut self.rt.mem, 4)?;
                     frame.push_operand(v);
                 },
                 Opcode::I64Store(ref m) => {

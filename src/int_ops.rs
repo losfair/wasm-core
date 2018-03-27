@@ -269,7 +269,39 @@ fn store_to_mem<T: LoadStore>(index: u32, val: T, m: &Memarg, storage: &mut Memo
 }
 
 #[inline]
-pub fn i32_load(index: u32, m: &Memarg, storage: &mut Memory, n: u32) -> ExecuteResult<Value> {
+fn unsigned_loaded_i32_to_signed(v: i32, n: u32) -> i32 {
+    match n {
+        1 => (v as u32) as u8 as i8 as i32,
+        2 => (v as u32) as u16 as i16 as i32,
+        _ => v
+    }
+}
+
+#[inline]
+fn unsigned_loaded_i64_to_signed(v: i64, n: u32) -> i64 {
+    match n {
+        1 => (v as u64) as u8 as i8 as i64,
+        2 => (v as u64) as u16 as i16 as i64,
+        4 => (v as u64) as u32 as i32 as i64,
+        _ => v
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn test_unsigned_loaded_to_signed() {
+    assert_eq!(unsigned_loaded_i32_to_signed(0b11111011, 1), -5);
+    assert_eq!(unsigned_loaded_i64_to_signed(0b11111011, 1), -5);
+}
+
+#[inline]
+pub fn i32_load_s(index: u32, m: &Memarg, storage: &mut Memory, n: u32) -> ExecuteResult<Value> {
+    let v: i32 = load_from_mem(index, m, storage, n)?;
+    Ok(Value::I32(unsigned_loaded_i32_to_signed(v, n)))
+}
+
+#[inline]
+pub fn i32_load_u(index: u32, m: &Memarg, storage: &mut Memory, n: u32) -> ExecuteResult<Value> {
     Ok(Value::I32(load_from_mem(index, m, storage, n)?))
 }
 
@@ -485,7 +517,13 @@ pub fn i64_extend_i32_s(v: i32) -> Value {
 }
 
 #[inline]
-pub fn i64_load(index: u32, m: &Memarg, storage: &mut Memory, n: u32) -> ExecuteResult<Value> {
+pub fn i64_load_s(index: u32, m: &Memarg, storage: &mut Memory, n: u32) -> ExecuteResult<Value> {
+    let v: i64 = load_from_mem(index, m, storage, n)?;
+    Ok(Value::I64(unsigned_loaded_i64_to_signed(v, n)))
+}
+
+#[inline]
+pub fn i64_load_u(index: u32, m: &Memarg, storage: &mut Memory, n: u32) -> ExecuteResult<Value> {
     Ok(Value::I64(load_from_mem(index, m, storage, n)?))
 }
 
