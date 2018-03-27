@@ -3,7 +3,7 @@ use std::ops::Deref;
 use module::*;
 use cfgraph::*;
 use super::llvm;
-use opcode::Opcode;
+use opcode::{Opcode, Memarg};
 use super::runtime::{Runtime, RuntimeConfig};
 
 fn generate_function_name(id: usize) -> String {
@@ -734,7 +734,7 @@ impl<'a> Compiler<'a> {
             }
         };
 
-        let build_i32_load = |
+        let build_std_load = |
             builder: &llvm::Builder,
             trusted_len: usize,
             signed: bool,
@@ -759,7 +759,17 @@ impl<'a> Compiler<'a> {
                         &build_std_zext
                     };
 
-                if trusted_len == 4 {
+                if trusted_len == 8 {
+                    build_ext(
+                        builder,
+                        builder.build_load(
+                            builder.build_bitcast(
+                                real_addr,
+                                llvm::Type::pointer(llvm::Type::int64(ctx))
+                            )
+                        )
+                    )
+                } else if trusted_len == 4 {
                     build_ext(
                         builder,
                         builder.build_load(
@@ -789,6 +799,75 @@ impl<'a> Compiler<'a> {
                             )
                         )
                     )
+                } else {
+                    panic!("Unknown trusted length: {}", trusted_len);
+                }
+            }
+        };
+
+        let build_std_store = |
+            builder: &llvm::Builder,
+            trusted_len: usize,
+            val: llvm::LLVMValueRef,
+            ptr: llvm::LLVMValueRef
+        | {
+            unsafe {
+                let real_addr = builder.build_call(
+                    &intrinsics.translate_pointer,
+                    &[
+                        ptr,
+                        builder.build_const_int(
+                            llvm::Type::int64(ctx),
+                            trusted_len as _,
+                            false
+                        )
+                    ]
+                );
+
+                if trusted_len == 8 {
+                    builder.build_store(
+                        val,
+                        builder.build_bitcast(
+                            real_addr,
+                            llvm::Type::pointer(llvm::Type::int64(ctx))
+                        )
+                    );
+                } else if trusted_len == 4 {
+                    builder.build_store(
+                        builder.build_cast(
+                            llvm::LLVMOpcode::LLVMTrunc,
+                            val,
+                            llvm::Type::int32(ctx)
+                        ),
+                        builder.build_bitcast(
+                            real_addr,
+                            llvm::Type::pointer(llvm::Type::int32(ctx))
+                        )
+                    );
+                } else if trusted_len == 2 {
+                    builder.build_store(
+                        builder.build_cast(
+                            llvm::LLVMOpcode::LLVMTrunc,
+                            val,
+                            llvm::Type::int16(ctx)
+                        ),
+                        builder.build_bitcast(
+                            real_addr,
+                            llvm::Type::pointer(llvm::Type::int16(ctx))
+                        )
+                    );
+                } else if trusted_len == 1 {
+                    builder.build_store(
+                        builder.build_cast(
+                            llvm::LLVMOpcode::LLVMTrunc,
+                            val,
+                            llvm::Type::int8(ctx)
+                        ),
+                        builder.build_bitcast(
+                            real_addr,
+                            llvm::Type::pointer(llvm::Type::int8(ctx))
+                        )
+                    );
                 } else {
                     panic!("Unknown trusted length: {}", trusted_len);
                 }
@@ -1045,6 +1124,145 @@ impl<'a> Compiler<'a> {
                                 )
                             );
                         },
+                        Opcode::I32Load(ref m) => {
+                            let builder = target_bb.builder();
+                            let addr = build_stack_pop(&builder);
+                            build_stack_push(&builder, build_std_load(
+                                &builder,
+                                4,
+                                false, // signed
+                                builder.build_add(
+                                    addr,
+                                    builder.build_const_int(
+                                        llvm::Type::int64(ctx),
+                                        m.offset as _,
+                                        false
+                                    )
+                                )
+                            ));
+                        },
+                        Opcode::I32Load8U(ref m) => {
+                            let builder = target_bb.builder();
+                            let addr = build_stack_pop(&builder);
+                            build_stack_push(&builder, build_std_load(
+                                &builder,
+                                1,
+                                false, // signed
+                                builder.build_add(
+                                    addr,
+                                    builder.build_const_int(
+                                        llvm::Type::int64(ctx),
+                                        m.offset as _,
+                                        false
+                                    )
+                                )
+                            ));
+                        },
+                        Opcode::I32Load8S(ref m) => {
+                            let builder = target_bb.builder();
+                            let addr = build_stack_pop(&builder);
+                            build_stack_push(&builder, build_std_load(
+                                &builder,
+                                1,
+                                true, // signed
+                                builder.build_add(
+                                    addr,
+                                    builder.build_const_int(
+                                        llvm::Type::int64(ctx),
+                                        m.offset as _,
+                                        false
+                                    )
+                                )
+                            ));
+                        },
+                        Opcode::I32Load16U(ref m) => {
+                            let builder = target_bb.builder();
+                            let addr = build_stack_pop(&builder);
+                            build_stack_push(&builder, build_std_load(
+                                &builder,
+                                2,
+                                false, // signed
+                                builder.build_add(
+                                    addr,
+                                    builder.build_const_int(
+                                        llvm::Type::int64(ctx),
+                                        m.offset as _,
+                                        false
+                                    )
+                                )
+                            ));
+                        },
+                        Opcode::I32Load16S(ref m) => {
+                            let builder = target_bb.builder();
+                            let addr = build_stack_pop(&builder);
+                            build_stack_push(&builder, build_std_load(
+                                &builder,
+                                2,
+                                true, // signed
+                                builder.build_add(
+                                    addr,
+                                    builder.build_const_int(
+                                        llvm::Type::int64(ctx),
+                                        m.offset as _,
+                                        false
+                                    )
+                                )
+                            ));
+                        },
+                        Opcode::I32Store(ref m) => {
+                            let builder = target_bb.builder();
+                            let val = build_stack_pop_i32(&builder);
+                            let addr = build_stack_pop(&builder);
+                            build_std_store(
+                                &builder,
+                                4,
+                                val,
+                                builder.build_add(
+                                    addr,
+                                    builder.build_const_int(
+                                        llvm::Type::int64(ctx),
+                                        m.offset as _,
+                                        false
+                                    )
+                                )
+                            );
+                        },
+                        Opcode::I32Store8(ref m) => {
+                            let builder = target_bb.builder();
+                            let val = build_stack_pop_i32(&builder);
+                            let addr = build_stack_pop(&builder);
+                            build_std_store(
+                                &builder,
+                                1,
+                                val,
+                                builder.build_add(
+                                    addr,
+                                    builder.build_const_int(
+                                        llvm::Type::int64(ctx),
+                                        m.offset as _,
+                                        false
+                                    )
+                                )
+                            );
+                        },
+                        Opcode::I32Store16(ref m) => {
+                            let builder = target_bb.builder();
+                            let val = build_stack_pop_i32(&builder);
+                            let addr = build_stack_pop(&builder);
+                            build_std_store(
+                                &builder,
+                                2,
+                                val,
+                                builder.build_add(
+                                    addr,
+                                    builder.build_const_int(
+                                        llvm::Type::int64(ctx),
+                                        m.offset as _,
+                                        false
+                                    )
+                                )
+                            );
+                        },
                         Opcode::I64Const(v) => {
                             let builder = target_bb.builder();
                             let v = builder.build_const_int(
@@ -1149,9 +1367,9 @@ mod tests {
     use super::*;
     use std::panic::{catch_unwind, AssertUnwindSafe};
 
-    fn build_ee_from_fn_bodies(
+    fn build_module_from_fn_bodies(
         fns: Vec<(Type, Vec<ValType>, Vec<Opcode>)>
-    ) -> llvm::ExecutionEngine {
+    ) -> CompiledModule {
         let mut m = Module::default();
         for (i, f) in fns.into_iter().enumerate() {
             m.types.push(f.0);
@@ -1169,6 +1387,19 @@ mod tests {
 
         target_module.module.optimize();
 
+        target_module
+    }
+
+    fn build_module_from_fn_body(ty: Type, locals: Vec<ValType>, body: Vec<Opcode>) -> CompiledModule {
+        build_module_from_fn_bodies(
+            vec! [ (ty, locals, body) ]
+        )
+    }
+
+    fn build_ee_from_fn_bodies(
+        fns: Vec<(Type, Vec<ValType>, Vec<Opcode>)>
+    ) -> llvm::ExecutionEngine {
+        let target_module = build_module_from_fn_bodies(fns);
         // FIXME: This is incorrect: Runtime should not be dropped
         let ee = llvm::ExecutionEngine::new(target_module.module);
         ee
@@ -1442,5 +1673,179 @@ mod tests {
             ).unwrap())
         };
         assert_eq!(f(35), 45);
+    }
+
+    #[test]
+    fn test_i32_load() {
+        let m = build_module_from_fn_body(
+            Type::Func(vec! [ ValType::I32 ], vec! [ ValType::I32 ]),
+            vec! [],
+            vec! [
+                Opcode::I32Const(12),
+                Opcode::GetLocal(0),
+                Opcode::I32Store(Memarg {
+                    offset: 4,
+                    align: 0
+                }),
+                Opcode::I32Const(16),
+                Opcode::I32Load(Memarg {
+                    offset: 0,
+                    align: 0
+                }),
+                Opcode::Return
+            ]
+        );
+
+        let _rt = m.rt.clone();
+        let ee = llvm::ExecutionEngine::new(m.module);
+
+        //println!("{}", ee.to_string());
+
+        let f: extern "C" fn (v: i64) -> i64 = unsafe {
+            ::std::mem::transmute(ee.get_function_address(
+                generate_function_name(0).as_str()
+            ).unwrap())
+        };
+        assert_eq!(f(42), 42);
+    }
+
+    #[test]
+    fn test_i32_load_8u() {
+        let m = build_module_from_fn_body(
+            Type::Func(vec! [ ValType::I32 ], vec! [ ValType::I32 ]),
+            vec! [],
+            vec! [
+                Opcode::I32Const(12),
+                Opcode::GetLocal(0),
+                Opcode::I32Store(Memarg {
+                    offset: 4,
+                    align: 0
+                }),
+                Opcode::I32Const(16),
+                Opcode::I32Load8U(Memarg {
+                    offset: 0,
+                    align: 0
+                }),
+                Opcode::Return
+            ]
+        );
+
+        let _rt = m.rt.clone();
+        let ee = llvm::ExecutionEngine::new(m.module);
+
+        //println!("{}", ee.to_string());
+
+        let f: extern "C" fn (v: i64) -> i64 = unsafe {
+            ::std::mem::transmute(ee.get_function_address(
+                generate_function_name(0).as_str()
+            ).unwrap())
+        };
+        assert_eq!(f(51328519), 7);
+        assert_eq!(f(6615), 215);
+    }
+
+    #[test]
+    fn test_i32_load_8s() {
+        let m = build_module_from_fn_body(
+            Type::Func(vec! [ ValType::I32 ], vec! [ ValType::I32 ]),
+            vec! [],
+            vec! [
+                Opcode::I32Const(12),
+                Opcode::GetLocal(0),
+                Opcode::I32Store(Memarg {
+                    offset: 4,
+                    align: 0
+                }),
+                Opcode::I32Const(16),
+                Opcode::I32Load8S(Memarg {
+                    offset: 0,
+                    align: 0
+                }),
+                Opcode::Return
+            ]
+        );
+
+        let _rt = m.rt.clone();
+        let ee = llvm::ExecutionEngine::new(m.module);
+
+        //println!("{}", ee.to_string());
+
+        let f: extern "C" fn (v: i64) -> i64 = unsafe {
+            ::std::mem::transmute(ee.get_function_address(
+                generate_function_name(0).as_str()
+            ).unwrap())
+        };
+        assert_eq!(f(51328519), 7);
+        assert_eq!(f(6615) as u32, 4294967255);
+    }
+
+    #[test]
+    fn test_i32_load_16u() {
+        let m = build_module_from_fn_body(
+            Type::Func(vec! [ ValType::I32 ], vec! [ ValType::I32 ]),
+            vec! [],
+            vec! [
+                Opcode::I32Const(12),
+                Opcode::GetLocal(0),
+                Opcode::I32Store(Memarg {
+                    offset: 4,
+                    align: 0
+                }),
+                Opcode::I32Const(16),
+                Opcode::I32Load16U(Memarg {
+                    offset: 0,
+                    align: 0
+                }),
+                Opcode::Return
+            ]
+        );
+
+        let _rt = m.rt.clone();
+        let ee = llvm::ExecutionEngine::new(m.module);
+
+        //println!("{}", ee.to_string());
+
+        let f: extern "C" fn (v: i64) -> i64 = unsafe {
+            ::std::mem::transmute(ee.get_function_address(
+                generate_function_name(0).as_str()
+            ).unwrap())
+        };
+        assert_eq!(f(51328519), 13831);
+        assert_eq!(f(3786093), 50541);
+    }
+
+    #[test]
+    fn test_i32_load_16s() {
+        let m = build_module_from_fn_body(
+            Type::Func(vec! [ ValType::I32 ], vec! [ ValType::I32 ]),
+            vec! [],
+            vec! [
+                Opcode::I32Const(12),
+                Opcode::GetLocal(0),
+                Opcode::I32Store(Memarg {
+                    offset: 4,
+                    align: 0
+                }),
+                Opcode::I32Const(16),
+                Opcode::I32Load16S(Memarg {
+                    offset: 0,
+                    align: 0
+                }),
+                Opcode::Return
+            ]
+        );
+
+        let _rt = m.rt.clone();
+        let ee = llvm::ExecutionEngine::new(m.module);
+
+        //println!("{}", ee.to_string());
+
+        let f: extern "C" fn (v: i64) -> i64 = unsafe {
+            ::std::mem::transmute(ee.get_function_address(
+                generate_function_name(0).as_str()
+            ).unwrap())
+        };
+        assert_eq!(f(51328519), 13831);
+        assert_eq!(f(3786093) as u32, 4294952301);
     }
 }
