@@ -1432,7 +1432,7 @@ mod tests {
     fn test_concurrent_jit_compile() {
         let threads: Vec<::std::thread::JoinHandle<()>> = (0..8).map(|_| {
             ::std::thread::spawn(|| {
-                for _ in 0..1000 {
+                for _ in 0..300 {
                     let _ = build_ee_from_fn_body(
                         Type::Func(vec! [], vec! [ ValType::I32 ]),
                         vec! [],
