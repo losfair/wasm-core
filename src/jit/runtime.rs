@@ -1,9 +1,11 @@
 use std::cell::UnsafeCell;
+use std::os::raw::c_void;
 use executor::NativeResolver;
 
 pub struct Runtime {
     mem: UnsafeCell<Vec<u8>>,
     mem_max: usize,
+    function_addrs: UnsafeCell<Option<Vec<*const c_void>>>,
     jit_info: Box<UnsafeCell<JitInfo>>
 }
 
@@ -47,7 +49,23 @@ impl Runtime {
         Runtime {
             mem: UnsafeCell::new(mem_vec),
             mem_max: cfg.mem_max,
+            function_addrs: UnsafeCell::new(None),
             jit_info: Box::new(UnsafeCell::new(jit_info))
+        }
+    }
+
+    pub fn set_function_addrs(&self, new_addrs: Vec<*const c_void>) {
+        unsafe {
+            let addrs = &mut *self.function_addrs.get();
+            *addrs = Some(new_addrs);
+        }
+    }
+
+    pub fn get_function_addr(&self, id: usize) -> *const c_void {
+        unsafe {
+            let addrs = &*self.function_addrs.get();
+            let addrs = addrs.as_ref().unwrap();
+            addrs[id]
         }
     }
 

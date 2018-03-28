@@ -1,5 +1,6 @@
 use std::rc::Rc;
 use std::ops::Deref;
+use std::os::raw::c_void;
 use module::*;
 use cfgraph::*;
 use super::llvm;
@@ -291,7 +292,43 @@ struct FunctionId(usize);
 
 pub struct CompiledModule {
     rt: Rc<Runtime>,
+    source_module: Module,
     module: llvm::Module
+}
+
+pub struct ExecutionContext {
+    rt: Rc<Runtime>,
+    source_module: Module,
+    ee: llvm::ExecutionEngine
+}
+
+impl CompiledModule {
+    pub fn into_execution_context(self) -> ExecutionContext {
+        ExecutionContext::from_compiled_module(self)
+    }
+}
+
+impl ExecutionContext {
+    pub fn from_compiled_module(m: CompiledModule) -> ExecutionContext {
+        let rt = m.rt.clone();
+        let ee = llvm::ExecutionEngine::new(m.module);
+
+        let function_addrs: Vec<*const c_void> = (0..m.source_module.functions.len())
+            .map(|i| ee.get_function_address(generate_function_name(i).as_str()).unwrap())
+            .collect();
+
+        rt.set_function_addrs(function_addrs);
+
+        ExecutionContext {
+            rt: rt,
+            source_module: m.source_module,
+            ee: ee
+        }
+    }
+
+    pub fn get_function_address(&self, id: usize) -> *const c_void {
+        self.rt.get_function_addr(id)
+    }
 }
 
 impl<'a> Compiler<'a> {
@@ -299,7 +336,7 @@ impl<'a> Compiler<'a> {
         Self::with_runtime(m, ctx, Rc::new(Runtime::new(RuntimeConfig::default())))
     }
 
-    pub fn with_runtime(m: &'a Module, ctx: llvm::Context, rt: Rc<Runtime>) -> OptimizeResult<Compiler<'a>> {
+    fn with_runtime(m: &'a Module, ctx: llvm::Context, rt: Rc<Runtime>) -> OptimizeResult<Compiler<'a>> {
         Ok(Compiler {
             _context: ctx.clone(),
             source_module: m,
@@ -335,6 +372,7 @@ impl<'a> Compiler<'a> {
 
         Ok(CompiledModule {
             rt: target_runtime,
+            source_module: self.source_module.clone(),
             module: target_module
         })
     }
@@ -1399,14 +1437,12 @@ mod tests {
 
     fn build_ee_from_fn_bodies(
         fns: Vec<(Type, Vec<ValType>, Vec<Opcode>)>
-    ) -> llvm::ExecutionEngine {
+    ) -> ExecutionContext {
         let target_module = build_module_from_fn_bodies(fns);
-        // FIXME: This is incorrect: Runtime should not be dropped
-        let ee = llvm::ExecutionEngine::new(target_module.module);
-        ee
+        target_module.into_execution_context()
     }
 
-    fn build_ee_from_fn_body(ty: Type, locals: Vec<ValType>, body: Vec<Opcode>) -> llvm::ExecutionEngine {
+    fn build_ee_from_fn_body(ty: Type, locals: Vec<ValType>, body: Vec<Opcode>) -> ExecutionContext {
         build_ee_from_fn_bodies(
             vec! [ (ty, locals, body) ]
         )
@@ -1464,12 +1500,10 @@ mod tests {
             ]
         );
 
-        println!("{}", ee.to_string());
+        println!("{}", ee.ee.to_string());
 
         let f: extern "C" fn () -> i64 = unsafe {
-            ::std::mem::transmute(ee.get_function_address(
-                generate_function_name(0).as_str()
-            ).unwrap())
+            ::std::mem::transmute(ee.get_function_address(0))
         };
         let ret = f();
         assert_eq!(ret, 42);
@@ -1488,9 +1522,7 @@ mod tests {
         );
 
         let f: extern "C" fn () -> i64 = unsafe {
-            ::std::mem::transmute(ee.get_function_address(
-                generate_function_name(0).as_str()
-            ).unwrap())
+            ::std::mem::transmute(ee.get_function_address(0))
         };
         match catch_unwind(AssertUnwindSafe(|| f())) {
             Ok(_) => panic!("Expecting panic"),
@@ -1510,9 +1542,7 @@ mod tests {
         );
 
         let f: extern "C" fn () -> i64 = unsafe {
-            ::std::mem::transmute(ee.get_function_address(
-                generate_function_name(0).as_str()
-            ).unwrap())
+            ::std::mem::transmute(ee.get_function_address(0))
         };
         match catch_unwind(AssertUnwindSafe(|| f())) {
             Ok(_) => panic!("Expecting panic"),
@@ -1535,9 +1565,7 @@ mod tests {
         );
 
         let f: extern "C" fn () -> i64 = unsafe {
-            ::std::mem::transmute(ee.get_function_address(
-                generate_function_name(0).as_str()
-            ).unwrap())
+            ::std::mem::transmute(ee.get_function_address(0))
         };
         let ret = f();
         assert_eq!(ret, 1);
@@ -1558,9 +1586,7 @@ mod tests {
         );
 
         let f: extern "C" fn () -> i64 = unsafe {
-            ::std::mem::transmute(ee.get_function_address(
-                generate_function_name(0).as_str()
-            ).unwrap())
+            ::std::mem::transmute(ee.get_function_address(0))
         };
         let ret = f();
         assert_eq!(ret, 2);
@@ -1582,9 +1608,7 @@ mod tests {
         //println!("{}", ee.to_string());
 
         let f: extern "C" fn (v: i64) -> i64 = unsafe {
-            ::std::mem::transmute(ee.get_function_address(
-                generate_function_name(0).as_str()
-            ).unwrap())
+            ::std::mem::transmute(ee.get_function_address(0))
         };
         let ret = f(22);
         assert_eq!(ret, 23);
@@ -1608,9 +1632,7 @@ mod tests {
         //println!("{}", ee.to_string());
 
         let f: extern "C" fn (v: i64) -> i64 = unsafe {
-            ::std::mem::transmute(ee.get_function_address(
-                generate_function_name(0).as_str()
-            ).unwrap())
+            ::std::mem::transmute(ee.get_function_address(0))
         };
         let ret = f(22);
         assert_eq!(ret, 22);
@@ -1642,9 +1664,7 @@ mod tests {
         //println!("{}", ee.to_string());
 
         let f: extern "C" fn (v: i64) -> i64 = unsafe {
-            ::std::mem::transmute(ee.get_function_address(
-                generate_function_name(0).as_str()
-            ).unwrap())
+            ::std::mem::transmute(ee.get_function_address(0))
         };
         assert_eq!(f(0) as i32, 11);
         assert_eq!(f(1) as i32, 22);
@@ -1667,9 +1687,7 @@ mod tests {
         //println!("{}", ee.to_string());
 
         let f: extern "C" fn (v: i64) -> i64 = unsafe {
-            ::std::mem::transmute(ee.get_function_address(
-                generate_function_name(0).as_str()
-            ).unwrap())
+            ::std::mem::transmute(ee.get_function_address(0))
         };
         let ret = f(939230566849);
         assert_eq!(ret as i32, -1367270975);
@@ -1705,19 +1723,17 @@ mod tests {
             ]
         );
 
-        println!("{}", ee.to_string());
+        println!("{}", ee.ee.to_string());
 
         let f: extern "C" fn (v: i64) -> i64 = unsafe {
-            ::std::mem::transmute(ee.get_function_address(
-                generate_function_name(0).as_str()
-            ).unwrap())
+            ::std::mem::transmute(ee.get_function_address(0))
         };
         assert_eq!(f(35), 45);
     }
 
     #[test]
     fn test_i32_load() {
-        let m = build_module_from_fn_body(
+        let ee = build_ee_from_fn_body(
             Type::Func(vec! [ ValType::I32 ], vec! [ ValType::I32 ]),
             vec! [],
             vec! [
@@ -1736,22 +1752,17 @@ mod tests {
             ]
         );
 
-        let _rt = m.rt.clone();
-        let ee = llvm::ExecutionEngine::new(m.module);
-
         //println!("{}", ee.to_string());
 
         let f: extern "C" fn (v: i64) -> i64 = unsafe {
-            ::std::mem::transmute(ee.get_function_address(
-                generate_function_name(0).as_str()
-            ).unwrap())
+            ::std::mem::transmute(ee.get_function_address(0))
         };
         assert_eq!(f(42), 42);
     }
 
     #[test]
     fn test_i32_load_8u() {
-        let m = build_module_from_fn_body(
+        let ee = build_ee_from_fn_body(
             Type::Func(vec! [ ValType::I32 ], vec! [ ValType::I32 ]),
             vec! [],
             vec! [
@@ -1770,15 +1781,10 @@ mod tests {
             ]
         );
 
-        let _rt = m.rt.clone();
-        let ee = llvm::ExecutionEngine::new(m.module);
-
         //println!("{}", ee.to_string());
 
         let f: extern "C" fn (v: i64) -> i64 = unsafe {
-            ::std::mem::transmute(ee.get_function_address(
-                generate_function_name(0).as_str()
-            ).unwrap())
+            ::std::mem::transmute(ee.get_function_address(0))
         };
         assert_eq!(f(51328519), 7);
         assert_eq!(f(6615), 215);
@@ -1786,7 +1792,7 @@ mod tests {
 
     #[test]
     fn test_i32_load_8s() {
-        let m = build_module_from_fn_body(
+        let ee = build_ee_from_fn_body(
             Type::Func(vec! [ ValType::I32 ], vec! [ ValType::I32 ]),
             vec! [],
             vec! [
@@ -1805,15 +1811,10 @@ mod tests {
             ]
         );
 
-        let _rt = m.rt.clone();
-        let ee = llvm::ExecutionEngine::new(m.module);
-
         //println!("{}", ee.to_string());
 
         let f: extern "C" fn (v: i64) -> i64 = unsafe {
-            ::std::mem::transmute(ee.get_function_address(
-                generate_function_name(0).as_str()
-            ).unwrap())
+            ::std::mem::transmute(ee.get_function_address(0))
         };
         assert_eq!(f(51328519), 7);
         assert_eq!(f(6615) as u32, 4294967255);
@@ -1821,7 +1822,7 @@ mod tests {
 
     #[test]
     fn test_i32_load_16u() {
-        let m = build_module_from_fn_body(
+        let ee = build_ee_from_fn_body(
             Type::Func(vec! [ ValType::I32 ], vec! [ ValType::I32 ]),
             vec! [],
             vec! [
@@ -1840,15 +1841,10 @@ mod tests {
             ]
         );
 
-        let _rt = m.rt.clone();
-        let ee = llvm::ExecutionEngine::new(m.module);
-
         //println!("{}", ee.to_string());
 
         let f: extern "C" fn (v: i64) -> i64 = unsafe {
-            ::std::mem::transmute(ee.get_function_address(
-                generate_function_name(0).as_str()
-            ).unwrap())
+            ::std::mem::transmute(ee.get_function_address(0))
         };
         assert_eq!(f(51328519), 13831);
         assert_eq!(f(3786093), 50541);
@@ -1856,7 +1852,7 @@ mod tests {
 
     #[test]
     fn test_i32_load_16s() {
-        let m = build_module_from_fn_body(
+        let ee = build_ee_from_fn_body(
             Type::Func(vec! [ ValType::I32 ], vec! [ ValType::I32 ]),
             vec! [],
             vec! [
@@ -1875,15 +1871,10 @@ mod tests {
             ]
         );
 
-        let _rt = m.rt.clone();
-        let ee = llvm::ExecutionEngine::new(m.module);
-
         //println!("{}", ee.to_string());
 
         let f: extern "C" fn (v: i64) -> i64 = unsafe {
-            ::std::mem::transmute(ee.get_function_address(
-                generate_function_name(0).as_str()
-            ).unwrap())
+            ::std::mem::transmute(ee.get_function_address(0))
         };
         assert_eq!(f(51328519), 13831);
         assert_eq!(f(3786093) as u32, 4294952301);
