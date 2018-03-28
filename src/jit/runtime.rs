@@ -1,10 +1,12 @@
 use std::cell::UnsafeCell;
 use std::os::raw::c_void;
 use executor::NativeResolver;
+use module::Module;
 
 pub struct Runtime {
     mem: UnsafeCell<Vec<u8>>,
     mem_max: usize,
+    pub source_module: Module,
     function_addrs: UnsafeCell<Option<Vec<*const c_void>>>,
     jit_info: Box<UnsafeCell<JitInfo>>
 }
@@ -31,7 +33,7 @@ impl Default for RuntimeConfig {
 }
 
 impl Runtime {
-    pub fn new(cfg: RuntimeConfig) -> Runtime {
+    pub fn new(cfg: RuntimeConfig, m: Module) -> Runtime {
         if cfg.mem_max < cfg.mem_default {
             panic!("mem_max < mem_default");
         }
@@ -49,6 +51,7 @@ impl Runtime {
         Runtime {
             mem: UnsafeCell::new(mem_vec),
             mem_max: cfg.mem_max,
+            source_module: m,
             function_addrs: UnsafeCell::new(None),
             jit_info: Box::new(UnsafeCell::new(jit_info))
         }
@@ -85,5 +88,9 @@ impl Runtime {
 
     pub fn get_jit_info(&self) -> *mut JitInfo {
         self.jit_info.get()
+    }
+
+    pub(super) extern "C" fn _jit_get_function_addr(rt: &Runtime, id: usize) -> *const c_void {
+        rt.get_function_addr(id)
     }
 }

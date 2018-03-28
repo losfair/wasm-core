@@ -20,7 +20,9 @@ pub struct Compiler<'a> {
 struct CompilerIntrinsics {
     check_stack: llvm::Function,
     select: llvm::Function,
-    translate_pointer: llvm::Function
+    translate_pointer: llvm::Function,
+    get_function_addr: llvm::Function,
+    enforce_typeck: llvm::Function
 }
 
 impl CompilerIntrinsics {
@@ -28,7 +30,9 @@ impl CompilerIntrinsics {
         CompilerIntrinsics {
             check_stack: Self::build_check_stack(ctx, m),
             select: Self::build_select(ctx, m),
-            translate_pointer: Self::build_translate_pointer(ctx, m, rt)
+            translate_pointer: Self::build_translate_pointer(ctx, m, rt),
+            get_function_addr: Self::build_get_function_addr(ctx, m, rt),
+            enforce_typeck: Self::build_enforce_typeck(ctx, m, rt)
         }
     }
 
@@ -38,6 +42,82 @@ impl CompilerIntrinsics {
 
     extern "C" fn mem_bounds_check_failed() {
         panic!("Memory bounds check failed");
+    }
+
+    extern "C" fn do_enforce_typeck(rt: &Runtime, expected_typeidx: usize, got_typeidx: usize) {
+        if expected_typeidx == got_typeidx {
+            return;
+        }
+
+        let ty1 = &rt.source_module.types[expected_typeidx];
+        let ty2 = &rt.source_module.types[got_typeidx];
+
+        if ty1 != ty2 {
+            panic!("enforce_typeck: Type mismatch: Expected {:?}, got {:?}", ty1, ty2);
+        }
+    }
+
+    fn build_enforce_typeck(ctx: &llvm::Context, m: &llvm::Module, rt: &Runtime) -> llvm::Function {
+        let f: llvm::Function = llvm::Function::new(
+            ctx,
+            m,
+            "enforce_typeck",
+            llvm::Type::function(
+                ctx,
+                llvm::Type::void(ctx),
+                &[
+                    llvm::Type::int64(ctx), // expected
+                    llvm::Type::int64(ctx) // got
+                ]
+            )
+        );
+        let initial_bb = llvm::BasicBlock::new(&f);
+
+        unsafe {
+            let builder = initial_bb.builder();
+            builder.build_call_raw(
+                builder.build_cast(
+                    llvm::LLVMOpcode::LLVMIntToPtr,
+                    builder.build_const_int(
+                        llvm::Type::int64(ctx),
+                        (Self::do_enforce_typeck as usize) as u64,
+                        false
+                    ),
+                    llvm::Type::pointer(
+                        llvm::Type::function(
+                            ctx,
+                            llvm::Type::void(ctx),
+                            &[
+                                llvm::Type::int_native(ctx),
+                                llvm::Type::int_native(ctx),
+                                llvm::Type::int_native(ctx)
+                            ]
+                        )
+                    )
+                ),
+                &[
+                    builder.build_const_int(
+                        llvm::Type::int_native(ctx),
+                        (rt as *const Runtime as usize) as u64,
+                        false
+                    ),
+                    builder.build_cast(
+                        llvm::LLVMOpcode::LLVMTrunc,
+                        f.get_param(0),
+                        llvm::Type::int_native(ctx)
+                    ),
+                    builder.build_cast(
+                        llvm::LLVMOpcode::LLVMTrunc,
+                        f.get_param(1),
+                        llvm::Type::int_native(ctx)
+                    )
+                ]
+            );
+            builder.build_ret_void();
+        }
+
+        f.verify();
+        f
     }
 
     fn build_select(ctx: &llvm::Context, m: &llvm::Module) -> llvm::Function {
@@ -286,6 +366,62 @@ impl CompilerIntrinsics {
 
         f
     }
+
+     fn build_get_function_addr(ctx: &llvm::Context, m: &llvm::Module, rt: &Runtime) -> llvm::Function {
+        let f: llvm::Function = llvm::Function::new(
+            ctx,
+            m,
+            "get_function_addr",
+            llvm::Type::function(
+                ctx,
+                llvm::Type::pointer(llvm::Type::void(ctx)),
+                &[
+                    llvm::Type::int64(ctx) // function id
+                ]
+            )
+        );
+        let initial_bb = llvm::BasicBlock::new(&f);
+
+        unsafe {
+            let builder = initial_bb.builder();
+            let ret = builder.build_call_raw(
+                builder.build_cast(
+                    llvm::LLVMOpcode::LLVMIntToPtr,
+                    builder.build_const_int(
+                        llvm::Type::int64(ctx),
+                        (Runtime::_jit_get_function_addr as usize) as u64,
+                        false
+                    ),
+                    llvm::Type::pointer(
+                        llvm::Type::function(
+                            ctx,
+                            llvm::Type::pointer(llvm::Type::void(ctx)),
+                            &[
+                                llvm::Type::int_native(ctx),
+                                llvm::Type::int_native(ctx)
+                            ]
+                        )
+                    )
+                ),
+                &[
+                    builder.build_const_int(
+                        llvm::Type::int_native(ctx),
+                        (rt as *const Runtime as usize) as u64,
+                        false
+                    ),
+                    builder.build_cast(
+                        llvm::LLVMOpcode::LLVMTrunc,
+                        f.get_param(0),
+                        llvm::Type::int_native(ctx)
+                    )
+                ]
+            );
+            builder.build_ret(ret);
+        }
+
+        f.verify();
+        f
+     }
 }
 
 struct FunctionId(usize);
@@ -333,7 +469,7 @@ impl ExecutionContext {
 
 impl<'a> Compiler<'a> {
     pub fn new(m: &'a Module, ctx: llvm::Context) -> OptimizeResult<Compiler<'a>> {
-        Self::with_runtime(m, ctx, Rc::new(Runtime::new(RuntimeConfig::default())))
+        Self::with_runtime(m, ctx, Rc::new(Runtime::new(RuntimeConfig::default(), m.clone())))
     }
 
     fn with_runtime(m: &'a Module, ctx: llvm::Context, rt: Rc<Runtime>) -> OptimizeResult<Compiler<'a>> {
@@ -909,6 +1045,40 @@ impl<'a> Compiler<'a> {
                 } else {
                     panic!("Unknown trusted length: {}", trusted_len);
                 }
+            }
+        };
+
+        let build_get_function_addr = |
+            builder: &llvm::Builder,
+            id: llvm::LLVMValueRef
+        | -> llvm::LLVMValueRef {
+            unsafe {
+                builder.build_call(
+                    &intrinsics.get_function_addr,
+                    &[
+                        id
+                    ]
+                )
+            }
+        };
+
+        let build_typeck = |
+            builder: &llvm::Builder,
+            expected: u64,
+            got: llvm::LLVMValueRef
+        | {
+            unsafe {
+                builder.build_call(
+                    &intrinsics.enforce_typeck,
+                    &[
+                        builder.build_const_int(
+                            llvm::Type::int64(ctx),
+                            expected,
+                            false
+                        ),
+                        got
+                    ]
+                );
             }
         };
 
