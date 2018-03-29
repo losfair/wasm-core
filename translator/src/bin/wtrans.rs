@@ -11,6 +11,7 @@ use translator::wasm_core::module::Module;
 use translator::wasm_core::executor::{VirtualMachine, RuntimeConfig, NativeResolver, NativeEntry, ExecuteError};
 use translator::wasm_core::resolver::EmscriptenResolver;
 use translator::config::ModuleConfig;
+use translator::wasm_core::jit;
 
 struct DefaultResolver {
 
@@ -66,6 +67,24 @@ fn main() {
     } else if mode == "build_json" {
         let module = Module::std_deserialize(serialized.as_slice()).unwrap();
         println!("{}", serde_json::to_string(&module).unwrap());
+    } else if mode == "exec_jit" {
+        let entry = args.next().expect("Entry function required");
+
+        let mut call_args: Vec<Value> = Vec::new();
+        for arg in args {
+            let v: i32 = arg.parse().unwrap();
+            call_args.push(Value::I32(v));
+        }
+
+        let module = Module::std_deserialize(serialized.as_slice()).unwrap();
+        let comp: jit::compiler::Compiler = jit::compiler::Compiler::new(&module).unwrap();
+
+        comp.set_native_resolver(EmscriptenResolver::new(DefaultResolver {}));
+        let exec = comp.compile().unwrap().into_execution_context();
+
+        let entry = module.lookup_exported_func(entry.as_str()).unwrap();
+        let ret = exec.execute(entry, &call_args);
+        println!("{:?}", ret);
     } else if mode == "exec" {
         let entry = args.next().expect("Entry function required");
 

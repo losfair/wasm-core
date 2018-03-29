@@ -1,3 +1,3 @@
 mod llvm;
-mod runtime;
-mod compiler;
+pub mod runtime;
+pub mod compiler;

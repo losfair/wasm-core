@@ -87,4 +87,13 @@ impl Module {
             Err(e) => Err(format!("{:?}", e))
         }
     }
+
+    pub fn lookup_exported_func(&self, name: &str) -> Option<usize> {
+        match self.exports.get(name) {
+            Some(v) => match *v {
+                Export::Function(id) => Some(id as usize)
+            },
+            None => None
+        }
+    }
 }

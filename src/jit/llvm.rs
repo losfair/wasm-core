@@ -107,7 +107,7 @@ impl Module {
             {
                 let pmb = LLVMPassManagerBuilderCreate();
 
-                LLVMPassManagerBuilderSetOptLevel(pmb, 3);
+                LLVMPassManagerBuilderSetOptLevel(pmb, 1);
                 LLVMPassManagerBuilderUseInlinerWithThreshold(pmb, 1000);
                 LLVMPassManagerBuilderPopulateModulePassManager(pmb, pm);
 
@@ -164,7 +164,7 @@ impl ExecutionEngine {
                 &mut mcjit_opts,
                 ::std::mem::size_of::<LLVMMCJITCompilerOptions>() as _
             );
-            mcjit_opts.OptLevel = 3;
+            mcjit_opts.OptLevel = 1;
 
             let ret = LLVMCreateMCJITCompilerForModule(
                 &mut ee,

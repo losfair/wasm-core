@@ -1,4 +1,5 @@
 use executor::{ExecuteResult, ExecuteError};
+use module::ValType;
 use fp_ops;
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize)]
@@ -57,6 +58,17 @@ impl Value {
                 Value::I64(v) => v,
                 Value::F32(v) => ::prelude::mem::transmute(v as f64),
                 Value::F64(v) => ::prelude::mem::transmute(v)
+            }
+        }
+    }
+
+    pub fn reinterpret_from_i64(v: i64, ty: ValType) -> Value {
+        unsafe {
+            match ty {
+                ValType::I32 => Value::I32(v as i32),
+                ValType::I64 => Value::I64(v),
+                ValType::F32 => Value::F32(::std::mem::transmute(v as u64 as u32)),
+                ValType::F64 => Value::F64(::std::mem::transmute(v))
             }
         }
     }

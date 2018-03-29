@@ -6,6 +6,8 @@ use cfgraph::*;
 use super::llvm;
 use opcode::{Opcode, Memarg};
 use super::runtime::{Runtime, RuntimeConfig};
+use executor::NativeResolver;
+use value::Value;
 
 fn generate_function_name(id: usize) -> String {
     format!("Wfunc_{}", id)
@@ -723,19 +725,108 @@ impl ExecutionContext {
     pub fn get_function_address(&self, id: usize) -> *const c_void {
         self.rt.get_function_addr(id)
     }
+
+    pub fn execute(&self, id: usize, args: &[Value]) -> Option<Value> {
+        let source_fn = &self.source_module.functions[id];
+        let ty = &self.source_module.types[source_fn.typeidx as usize];
+        let Type::Func(ref ty_args, ref ty_ret) = *ty;
+
+        if ty_args.len() != args.len() {
+            panic!("Argument length mismatch");
+        }
+
+        for t in ty_args {
+            match *t {
+                ValType::I32 | ValType::I64 => {},
+                _ => panic!("Unsupported type in function signature: {:?}", t)
+            }
+        }
+
+        if ty_ret.len() > 0 {
+            match ty_ret[0] {
+                ValType::I32 | ValType::I64 => {},
+                _ => panic!("Unsupported function return type: {:?}", ty_ret[0])
+            }
+        }
+
+        let target_addr = self.get_function_address(id);
+
+        unsafe {
+            let tmp_ctx = llvm::Context::new();
+            let m = llvm::Module::new(&tmp_ctx, "".into());
+            {
+                let f = llvm::Function::new(
+                    &tmp_ctx,
+                    &m,
+                    "eval_entry",
+                    llvm::Type::function(
+                        &tmp_ctx,
+                        llvm::Type::int64(&tmp_ctx),
+                        &[]
+                    )
+                );
+                let initial_bb = llvm::BasicBlock::new(&f);
+                let builder = initial_bb.builder();
+                let call_arg_types: Vec<llvm::Type> = ty_args.iter().map(|v| v.to_llvm_type(&tmp_ctx)).collect();
+                let target_fn = builder.build_cast(
+                    llvm::LLVMOpcode::LLVMIntToPtr,
+                    builder.build_const_int(
+                        llvm::Type::int64(&tmp_ctx),
+                        target_addr as usize as _,
+                        false
+                    ),
+                    llvm::Type::pointer(
+                        llvm::Type::function(
+                            &tmp_ctx,
+                            llvm::Type::int64(&tmp_ctx), // FIXME: Undefined behavior
+                            &call_arg_types
+                        )
+                    )
+                );
+                let call_args: Vec<llvm::LLVMValueRef> = args.iter().map(|v| builder.build_const_int(
+                    llvm::Type::int64(&tmp_ctx),
+                    v.reinterpret_as_i64() as _,
+                    false
+                )).collect();
+                let ret = builder.build_call_raw(
+                    target_fn,
+                    &call_args
+                );
+                builder.build_ret(ret);
+            }
+            m.verify();
+            let ee = llvm::ExecutionEngine::new(m);
+            let entry = ee.get_function_address("eval_entry").unwrap();
+            let entry: extern "C" fn () -> i64 = ::std::mem::transmute(entry);
+            let ret = entry();
+            if ty_ret.len() > 0 {
+                Some(Value::reinterpret_from_i64(ret, ty_ret[0]))
+            } else {
+                None
+            }
+        }
+    }
 }
 
 impl<'a> Compiler<'a> {
-    pub fn new(m: &'a Module, ctx: llvm::Context) -> OptimizeResult<Compiler<'a>> {
-        Self::with_runtime(m, ctx, Rc::new(Runtime::new(RuntimeConfig::default(), m.clone())))
+    pub fn new(m: &'a Module) -> OptimizeResult<Compiler<'a>> {
+        Self::with_runtime_config(m, RuntimeConfig::default())
     }
 
-    fn with_runtime(m: &'a Module, ctx: llvm::Context, rt: Rc<Runtime>) -> OptimizeResult<Compiler<'a>> {
+    pub fn with_runtime_config(m: &'a Module, cfg: RuntimeConfig) -> OptimizeResult<Compiler<'a>> {
+        Self::with_runtime(m, Rc::new(Runtime::new(cfg, m.clone())))
+    }
+
+    fn with_runtime(m: &'a Module, rt: Rc<Runtime>) -> OptimizeResult<Compiler<'a>> {
         Ok(Compiler {
-            _context: ctx.clone(),
+            _context: llvm::Context::new(),
             source_module: m,
             rt: rt
         })
+    }
+
+    pub fn set_native_resolver<R: NativeResolver>(&self, resolver: R) {
+        self.rt.set_native_resolver(resolver);
     }
 
     pub fn compile(&self) -> OptimizeResult<CompiledModule> {
@@ -762,6 +853,10 @@ impl<'a> Compiler<'a> {
             )?;
             //println!("{}", target_functions[i].to_string());
             target_functions[i].verify();
+        }
+
+        if self.rt.opt_level > 0 {
+            target_module.optimize();
         }
 
         Ok(CompiledModule {
@@ -2565,6 +2660,7 @@ impl<'a> Compiler<'a> {
                             | Opcode::I32Rotl | Opcode::I32Rotr
                             | Opcode::I64Rotl | Opcode::I64Rotr => {
                             // not implemented
+                            eprintln!("Warning: Not implemented: {:?}", op);
                             let builder = target_bb.builder();
                             builder.build_call(
                                 &intrinsics.checked_unreachable,
@@ -2658,10 +2754,11 @@ impl<'a> Compiler<'a> {
 impl ValType {
     fn to_llvm_type(&self, ctx: &llvm::Context) -> llvm::Type {
         match *self {
-            ValType::I32 | ValType::I64 => llvm::Type::int64(ctx),
+            ValType::I32 | ValType::I64
+                | ValType::F32 | ValType::F64 => llvm::Type::int64(ctx),
             //ValType::I64 => llvm::Type::int64(ctx),
-            ValType::F32 => llvm::Type::float32(ctx),
-            ValType::F64 => llvm::Type::float64(ctx)
+            //ValType::F32 => llvm::Type::float32(ctx),
+            //ValType::F64 => llvm::Type::float64(ctx)
         }
     }
 }
@@ -2710,10 +2807,9 @@ mod tests {
                 }
             });
         }
-        let compiler = Compiler::new(&m, llvm::Context::new()).unwrap();
+        let compiler = Compiler::new(&m).unwrap();
         let target_module = compiler.compile().unwrap();
 
-        target_module.module.optimize();
         target_module
     }
 

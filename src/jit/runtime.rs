@@ -5,6 +5,7 @@ use module::{Module, Type, ValType};
 use value::Value;
 
 pub struct Runtime {
+    pub(super) opt_level: u32,
     mem: UnsafeCell<Vec<u8>>,
     mem_max: usize,
     pub source_module: Module,
@@ -18,7 +19,8 @@ pub struct Runtime {
 #[derive(Clone, Debug)]
 pub struct RuntimeConfig {
     pub mem_default: usize,
-    pub mem_max: usize
+    pub mem_max: usize,
+    pub opt_level: u32
 }
 
 #[repr(C)]
@@ -32,7 +34,8 @@ impl Default for RuntimeConfig {
     fn default() -> Self {
         RuntimeConfig {
             mem_default: 4096 * 1024,
-            mem_max: 16384 * 1024
+            mem_max: 16384 * 1024,
+            opt_level: 3
         }
     }
 }
@@ -81,6 +84,7 @@ impl Runtime {
         };
 
         Runtime {
+            opt_level: cfg.opt_level,
             mem: UnsafeCell::new(mem_vec),
             mem_max: cfg.mem_max,
             source_module: m,
@@ -168,14 +172,7 @@ impl Runtime {
         let mut call_args: Vec<Value> = Vec::new();
 
         for i in 0..req.args.len() {
-            call_args.push(unsafe {
-                match ty_args[i] {
-                    ValType::I32 => Value::I32(req.args[i] as i32),
-                    ValType::I64 => Value::I64(req.args[i]),
-                    ValType::F32 => Value::F32(::std::mem::transmute(req.args[i] as u64 as u32)),
-                    ValType::F64 => Value::F64(::std::mem::transmute(req.args[i]))
-                }
-            });
+            call_args.push(Value::reinterpret_from_i64(req.args[i], ty_args[i]));
         }
 
         let ret = nf.borrow_mut().f.invoke(&mut invoke_ctx, &call_args).unwrap();
