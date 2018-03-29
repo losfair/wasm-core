@@ -257,6 +257,13 @@ impl Type {
         }
     }
 
+    pub fn int1(ctx: &Context) -> Type {
+        Type {
+            _context: ctx.clone(),
+            _ref: unsafe { LLVMInt1TypeInContext(ctx.inner._ref) }
+        }
+    }
+
     pub fn int8(ctx: &Context) -> Type {
         Type {
             _context: ctx.clone(),

@@ -18,6 +18,12 @@ pub struct Compiler<'a> {
 }
 
 struct CompilerIntrinsics {
+    popcnt_i32: llvm::Function,
+    popcnt_i64: llvm::Function,
+    clz_i32: llvm::Function,
+    clz_i64: llvm::Function,
+    ctz_i32: llvm::Function,
+    ctz_i64: llvm::Function,
     check_stack: llvm::Function,
     select: llvm::Function,
     translate_pointer: llvm::Function,
@@ -30,6 +36,82 @@ struct CompilerIntrinsics {
 impl CompilerIntrinsics {
     pub fn new(ctx: &llvm::Context, m: &llvm::Module, rt: &Runtime) -> CompilerIntrinsics {
         CompilerIntrinsics {
+            popcnt_i32: llvm::Function::new(
+                ctx,
+                m,
+                "llvm.ctpop.i32",
+                llvm::Type::function(
+                    ctx,
+                    llvm::Type::int32(ctx),
+                    &[
+                        llvm::Type::int32(ctx)
+                    ]
+                )
+            ),
+            popcnt_i64: llvm::Function::new(
+                ctx,
+                m,
+                "llvm.ctpop.i64",
+                llvm::Type::function(
+                    ctx,
+                    llvm::Type::int64(ctx),
+                    &[
+                        llvm::Type::int64(ctx)
+                    ]
+                )
+            ),
+            clz_i32: llvm::Function::new(
+                ctx,
+                m,
+                "llvm.ctlz.i32",
+                llvm::Type::function(
+                    ctx,
+                    llvm::Type::int32(ctx),
+                    &[
+                        llvm::Type::int32(ctx),
+                        llvm::Type::int1(ctx)
+                    ]
+                )
+            ),
+            clz_i64: llvm::Function::new(
+                ctx,
+                m,
+                "llvm.ctlz.i64",
+                llvm::Type::function(
+                    ctx,
+                    llvm::Type::int64(ctx),
+                    &[
+                        llvm::Type::int64(ctx),
+                        llvm::Type::int1(ctx)
+                    ]
+                )
+            ),
+            ctz_i32: llvm::Function::new(
+                ctx,
+                m,
+                "llvm.cttz.i32",
+                llvm::Type::function(
+                    ctx,
+                    llvm::Type::int32(ctx),
+                    &[
+                        llvm::Type::int32(ctx),
+                        llvm::Type::int1(ctx)
+                    ]
+                )
+            ),
+            ctz_i64: llvm::Function::new(
+                ctx,
+                m,
+                "llvm.cttz.i64",
+                llvm::Type::function(
+                    ctx,
+                    llvm::Type::int64(ctx),
+                    &[
+                        llvm::Type::int64(ctx),
+                        llvm::Type::int1(ctx)
+                    ]
+                )
+            ),
             check_stack: Self::build_check_stack(ctx, m),
             select: Self::build_select(ctx, m),
             translate_pointer: Self::build_translate_pointer(ctx, m, rt),
@@ -929,6 +1011,19 @@ impl<'a> Compiler<'a> {
             }
         };
 
+        let build_i32_unop = |
+            builder: &llvm::Builder,
+            op: &Fn(&llvm::Builder, llvm::LLVMValueRef) -> llvm::LLVMValueRef
+        | {
+            unsafe {
+                let v = build_stack_pop_i32(&builder);
+                build_stack_push_i32(
+                    &builder,
+                    op(builder, v)
+                );
+            }
+        };
+
         let build_i32_binop = |
             builder: &llvm::Builder,
             op: &Fn(&llvm::Builder, llvm::LLVMValueRef, llvm::LLVMValueRef) -> llvm::LLVMValueRef
@@ -1529,6 +1624,49 @@ impl<'a> Compiler<'a> {
                                 llvm::Type::int64(ctx)
                             );
                             build_stack_push(&builder, v);
+                        },
+                        Opcode::I32Popcnt => {
+                            build_i32_unop(
+                                &target_bb.builder(),
+                                &|t, v| t.build_call(
+                                    &intrinsics.popcnt_i32,
+                                    &[
+                                        v
+                                    ]
+                                )
+                            );
+                        },
+                        Opcode::I32Clz => {
+                            build_i32_unop(
+                                &target_bb.builder(),
+                                &|t, v| t.build_call(
+                                    &intrinsics.clz_i32,
+                                    &[
+                                        v,
+                                        t.build_const_int(
+                                            llvm::Type::int1(ctx),
+                                            0,
+                                            false
+                                        )
+                                    ]
+                                )
+                            );
+                        },
+                        Opcode::I32Ctz => {
+                            build_i32_unop(
+                                &target_bb.builder(),
+                                &|t, v| t.build_call(
+                                    &intrinsics.ctz_i32,
+                                    &[
+                                        v,
+                                        t.build_const_int(
+                                            llvm::Type::int1(ctx),
+                                            0,
+                                            false
+                                        )
+                                    ]
+                                )
+                            );
                         },
                         Opcode::I32Add => {
                             build_i32_binop(
@@ -2446,6 +2584,79 @@ mod tests {
         assert_eq!(f(51328519), 13831);
         assert_eq!(f(3786093) as u32, 4294952301);
     }
+
+    #[test]
+    fn test_i32_ctz() {
+        let ee = build_ee_from_fn_body(
+            Type::Func(vec! [ ValType::I32 ], vec! [ ValType::I32 ]),
+            vec! [],
+            vec! [
+                Opcode::GetLocal(0),
+                Opcode::I32Ctz,
+                Opcode::Return
+            ]
+        );
+
+        //println!("{}", ee.to_string());
+
+        let f: extern "C" fn (v: i64) -> i64 = unsafe {
+            ::std::mem::transmute(ee.get_function_address(0))
+        };
+        assert_eq!(f(0), 32);
+        assert_eq!(f(1), 0);
+        assert_eq!(f(2), 1);
+        assert_eq!(f(3), 0);
+        assert_eq!(f(4), 2);
+    }
+
+    #[test]
+    fn test_i32_clz() {
+        let ee = build_ee_from_fn_body(
+            Type::Func(vec! [ ValType::I32 ], vec! [ ValType::I32 ]),
+            vec! [],
+            vec! [
+                Opcode::GetLocal(0),
+                Opcode::I32Clz,
+                Opcode::Return
+            ]
+        );
+
+        //println!("{}", ee.to_string());
+
+        let f: extern "C" fn (v: i64) -> i64 = unsafe {
+            ::std::mem::transmute(ee.get_function_address(0))
+        };
+        assert_eq!(f(0), 32);
+        assert_eq!(f(1), 31);
+        assert_eq!(f(2), 30);
+        assert_eq!(f(3), 30);
+        assert_eq!(f(4), 29);
+    }
+
+    #[test]
+    fn test_i32_popcnt() {
+        let ee = build_ee_from_fn_body(
+            Type::Func(vec! [ ValType::I32 ], vec! [ ValType::I32 ]),
+            vec! [],
+            vec! [
+                Opcode::GetLocal(0),
+                Opcode::I32Popcnt,
+                Opcode::Return
+            ]
+        );
+
+        //println!("{}", ee.to_string());
+
+        let f: extern "C" fn (v: i64) -> i64 = unsafe {
+            ::std::mem::transmute(ee.get_function_address(0))
+        };
+        assert_eq!(f(0), 0);
+        assert_eq!(f(1), 1);
+        assert_eq!(f(2), 1);
+        assert_eq!(f(3), 2);
+        assert_eq!(f(4), 1);
+    }
+
 
     #[test]
     fn test_current_memory() {
