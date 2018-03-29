@@ -13,8 +13,8 @@ pub struct Runtime {
 
 #[derive(Clone, Debug)]
 pub struct RuntimeConfig {
-    mem_default: usize,
-    mem_max: usize
+    pub mem_default: usize,
+    pub mem_max: usize
 }
 
 #[repr(C)]
@@ -77,9 +77,11 @@ impl Runtime {
         self.get_function_addr(id)
     }
 
-    pub fn grow_memory(&self, len_inc: usize) {
+    pub fn grow_memory(&self, len_inc: usize) -> usize {
         unsafe {
             let mem: &mut Vec<u8> = &mut *self.mem.get();
+            let prev_len = mem.len();
+
             if mem.len().checked_add(len_inc).unwrap() > self.mem_max {
                 panic!("Memory limit exceeded");
             }
@@ -88,11 +90,17 @@ impl Runtime {
             let jit_info = &mut *self.jit_info.get();
             jit_info.mem_begin = &mut mem[0];
             jit_info.mem_len = mem.len();
+
+            prev_len
         }
     }
 
     pub fn get_jit_info(&self) -> *mut JitInfo {
         self.jit_info.get()
+    }
+
+    pub(super) extern "C" fn _jit_grow_memory(rt: &Runtime, len_inc: usize) -> usize {
+        rt.grow_memory(len_inc)
     }
 
     pub(super) extern "C" fn _jit_get_function_addr(rt: &Runtime, id: usize) -> *const c_void {

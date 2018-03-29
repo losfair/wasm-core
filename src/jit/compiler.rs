@@ -22,7 +22,9 @@ struct CompilerIntrinsics {
     select: llvm::Function,
     translate_pointer: llvm::Function,
     indirect_get_function_addr: llvm::Function,
-    enforce_indirect_fn_typeck: llvm::Function
+    enforce_indirect_fn_typeck: llvm::Function,
+    grow_memory: llvm::Function,
+    current_memory: llvm::Function
 }
 
 impl CompilerIntrinsics {
@@ -32,7 +34,9 @@ impl CompilerIntrinsics {
             select: Self::build_select(ctx, m),
             translate_pointer: Self::build_translate_pointer(ctx, m, rt),
             indirect_get_function_addr: Self::build_indirect_get_function_addr(ctx, m, rt),
-            enforce_indirect_fn_typeck: Self::build_enforce_indirect_fn_typeck(ctx, m, rt)
+            enforce_indirect_fn_typeck: Self::build_enforce_indirect_fn_typeck(ctx, m, rt),
+            grow_memory: Self::build_grow_memory(ctx, m, rt),
+            current_memory: Self::build_current_memory(ctx, m, rt)
         }
     }
 
@@ -57,6 +61,130 @@ impl CompilerIntrinsics {
         if ty1 != ty2 {
             panic!("enforce_typeck: Type mismatch: Expected {:?}, got {:?}", ty1, ty2);
         }
+    }
+
+    fn build_current_memory(ctx: &llvm::Context, m: &llvm::Module, rt: &Runtime) -> llvm::Function {
+        let f: llvm::Function = llvm::Function::new(
+            ctx,
+            m,
+            "current_memory",
+            llvm::Type::function(
+                ctx,
+                llvm::Type::int64(ctx),
+                &[]
+            )
+        );
+        let initial_bb = llvm::BasicBlock::new(&f);
+
+        unsafe {
+            let builder = initial_bb.builder();
+            let jit_info = &mut *rt.get_jit_info();
+
+            let ret = builder.build_cast(
+                llvm::LLVMOpcode::LLVMZExt,
+                builder.build_load(
+                    builder.build_cast(
+                        llvm::LLVMOpcode::LLVMIntToPtr,
+                        builder.build_const_int(
+                            llvm::Type::int64(ctx),
+                            (&jit_info.mem_len as *const usize as usize) as u64,
+                            false
+                        ),
+                        llvm::Type::pointer(llvm::Type::int_native(ctx))
+                    )
+                ),
+                llvm::Type::int64(ctx)
+            );
+            builder.build_ret(
+                builder.build_udiv(
+                    ret,
+                    builder.build_const_int(
+                        llvm::Type::int64(ctx),
+                        65536,
+                        false
+                    )
+                )
+            );
+        }
+
+        f.verify();
+        f
+    }
+
+    fn build_grow_memory(ctx: &llvm::Context, m: &llvm::Module, rt: &Runtime) -> llvm::Function {
+        let f: llvm::Function = llvm::Function::new(
+            ctx,
+            m,
+            "grow_memory",
+            llvm::Type::function(
+                ctx,
+                llvm::Type::int64(ctx), // prev_pages
+                &[
+                    llvm::Type::int64(ctx) // n_pages
+                ]
+            )
+        );
+        let initial_bb = llvm::BasicBlock::new(&f);
+
+        unsafe {
+            let builder = initial_bb.builder();
+            let ret = builder.build_call_raw(
+                builder.build_cast(
+                    llvm::LLVMOpcode::LLVMIntToPtr,
+                    builder.build_const_int(
+                        llvm::Type::int64(ctx),
+                        Runtime::_jit_grow_memory as usize as _,
+                        false
+                    ),
+                    llvm::Type::pointer(
+                        llvm::Type::function(
+                            ctx,
+                            llvm::Type::int_native(ctx),
+                            &[
+                                llvm::Type::int_native(ctx), // rt
+                                llvm::Type::int_native(ctx) // len_inc
+                            ]
+                        )
+                    )
+                ),
+                &[
+                    builder.build_const_int(
+                        llvm::Type::int_native(ctx),
+                        (rt as *const Runtime as usize) as u64,
+                        false
+                    ),
+                    builder.build_cast(
+                        llvm::LLVMOpcode::LLVMTrunc,
+                        builder.build_mul(
+                            f.get_param(0),
+                            builder.build_const_int(
+                                llvm::Type::int64(ctx),
+                                65536,
+                                false
+                            )
+                        ),
+                        llvm::Type::int_native(ctx)
+                    )
+                ]
+            );
+            builder.build_ret(
+                builder.build_udiv(
+                    builder.build_cast(
+                        llvm::LLVMOpcode::LLVMZExt,
+                        ret,
+                        llvm::Type::int64(ctx)
+                    ),
+                    builder.build_const_int(
+                        llvm::Type::int64(ctx),
+                        65536,
+                        false
+                    )
+                )
+            );
+        }
+
+        f.verify();
+        f
     }
 
     fn build_enforce_indirect_fn_typeck(ctx: &llvm::Context, m: &llvm::Module, rt: &Runtime) -> llvm::Function {
@@ -1065,6 +1193,31 @@ impl<'a> Compiler<'a> {
             }
         };
 
+        let build_grow_memory = |
+            builder: &llvm::Builder,
+            n_pages: llvm::LLVMValueRef
+        | -> llvm::LLVMValueRef {
+            unsafe {
+                builder.build_call(
+                    &intrinsics.grow_memory,
+                    &[
+                        n_pages
+                    ]
+                )
+            }
+        };
+
+        let build_current_memory = |
+            builder: &llvm::Builder
+        | -> llvm::LLVMValueRef {
+            unsafe {
+                builder.build_call(
+                    &intrinsics.current_memory,
+                    &[]
+                )
+            }
+        };
+
         let target_basic_blocks: Vec<llvm::BasicBlock<'_>> = (0..source_cfg.blocks.len())
             .map(|_| llvm::BasicBlock::new(target_func))
             .collect();
@@ -1157,6 +1310,21 @@ impl<'a> Compiler<'a> {
                             if ft_ret.len() > 0 {
                                 build_stack_push(&builder, ret);
                             }
+                        },
+                        Opcode::CurrentMemory => {
+                            let builder = target_bb.builder();
+                            build_stack_push(
+                                &builder,
+                                build_current_memory(&builder)
+                            );
+                        },
+                        Opcode::GrowMemory => {
+                            let builder = target_bb.builder();
+                            let n_pages = build_stack_pop(&builder);
+                            build_stack_push(
+                                &builder,
+                                build_grow_memory(&builder, n_pages)
+                            );
                         },
                         Opcode::GetLocal(id) => {
                             let builder = target_bb.builder();
@@ -2096,6 +2264,52 @@ mod tests {
         };
         assert_eq!(f(51328519), 13831);
         assert_eq!(f(3786093) as u32, 4294952301);
+    }
+
+    #[test]
+    fn test_current_memory() {
+        let ee = build_ee_from_fn_body(
+            Type::Func(vec! [ ], vec! [ ValType::I32 ]),
+            vec! [],
+            vec! [
+                Opcode::CurrentMemory,
+                Opcode::Return
+            ]
+        );
+
+        //println!("{}", ee.to_string());
+
+        let f: extern "C" fn () -> i64 = unsafe {
+            ::std::mem::transmute(ee.get_function_address(0))
+        };
+
+        let default_rt_config = RuntimeConfig::default();
+        assert_eq!(f(), (default_rt_config.mem_default as i64) / 65536);
+    }
+
+    #[test]
+    fn test_grow_memory() {
+        let ee = build_ee_from_fn_body(
+            Type::Func(vec! [ ], vec! [ ValType::I32 ]),
+            vec! [],
+            vec! [
+                Opcode::I32Const(1),
+                Opcode::GrowMemory,
+                Opcode::Return
+            ]
+        );
+
+        //println!("{}", ee.to_string());
+
+        let f: extern "C" fn () -> i64 = unsafe {
+            ::std::mem::transmute(ee.get_function_address(0))
+        };
+
+        let default_rt_config = RuntimeConfig::default();
+        let v1 = f();
+        assert_eq!(v1, (default_rt_config.mem_default as i64) / 65536);
+        let v2 = f();
+        assert_eq!(v2, v1 + 1);
     }
 
     #[test]
