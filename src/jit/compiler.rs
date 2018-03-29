@@ -1425,6 +1425,82 @@ impl<'a> Compiler<'a> {
                                 build_grow_memory(&builder, n_pages)
                             );
                         },
+                        Opcode::GetGlobal(id) => {
+                            let id = id as usize;
+                            if id >= source_module.globals.len() {
+                                panic!("Global index out of bound");
+                            }
+                            let builder = target_bb.builder();
+
+                            let jit_info = &mut *rt.get_jit_info();
+                            let global_begin_ptr = builder.build_cast(
+                                llvm::LLVMOpcode::LLVMIntToPtr,
+                                builder.build_const_int(
+                                    llvm::Type::int64(ctx),
+                                    &mut jit_info.global_begin as *mut *mut i64 as usize as _,
+                                    false
+                                ),
+                                llvm::Type::pointer(
+                                    llvm::Type::pointer(
+                                        llvm::Type::int64(ctx)
+                                    )
+                                )
+                            );
+
+                            let global_begin = builder.build_load(global_begin_ptr);
+                            let val = builder.build_load(
+                                builder.build_gep(
+                                    global_begin,
+                                    &[
+                                        builder.build_const_int(
+                                            llvm::Type::int64(ctx),
+                                            id as _,
+                                            false
+                                        )
+                                    ]
+                                )
+                            );
+                            build_stack_push(&builder, val);
+                        },
+                        Opcode::SetGlobal(id) => {
+                            let id = id as usize;
+                            if id >= source_module.globals.len() {
+                                panic!("Global index out of bound");
+                            }
+                            let builder = target_bb.builder();
+
+                            let val = build_stack_pop(&builder);
+
+                            let jit_info = &mut *rt.get_jit_info();
+                            let global_begin_ptr = builder.build_cast(
+                                llvm::LLVMOpcode::LLVMIntToPtr,
+                                builder.build_const_int(
+                                    llvm::Type::int64(ctx),
+                                    &mut jit_info.global_begin as *mut *mut i64 as usize as _,
+                                    false
+                                ),
+                                llvm::Type::pointer(
+                                    llvm::Type::pointer(
+                                        llvm::Type::int64(ctx)
+                                    )
+                                )
+                            );
+
+                            let global_begin = builder.build_load(global_begin_ptr);
+                            builder.build_store(
+                                val,
+                                builder.build_gep(
+                                    global_begin,
+                                    &[
+                                        builder.build_const_int(
+                                            llvm::Type::int64(ctx),
+                                            id as _,
+                                            false
+                                        )
+                                    ]
+                                )
+                            );
+                        },
                         Opcode::GetLocal(id) => {
                             let builder = target_bb.builder();
                             let v = build_get_local(&builder, id as _);
@@ -2521,5 +2597,69 @@ mod tests {
             ::std::mem::transmute(ee.get_function_address(0))
         };
         assert_eq!(f(35), 40);
+    }
+
+    #[test]
+    fn test_globals() {
+        use value::Value;
+
+        let mut m = Module::default();
+        m.globals.push(Global {
+            value: Value::I32(0)
+        });
+        m.globals.push(Global {
+            value: Value::I32(0)
+        });
+
+        let m = prepare_module_from_fn_bodies(
+            m,
+            vec! [
+                (
+                    Type::Func(vec! [ ValType::I32 ], vec! [ ] ),
+                    vec! [],
+                    vec! [
+                        Opcode::GetLocal(0),
+                        Opcode::GetLocal(0),
+                        Opcode::SetGlobal(0),
+                        Opcode::I32Const(1),
+                        Opcode::I32Add,
+                        Opcode::SetGlobal(1),
+                        Opcode::Return
+                    ]
+                ),
+                (
+                    Type::Func(vec! [ ], vec! [ ValType::I32 ]),
+                    vec! [],
+                    vec! [
+                        Opcode::GetGlobal(0),
+                        Opcode::Return
+                    ]
+                ),
+                (
+                    Type::Func(vec! [ ], vec! [ ValType::I32 ]),
+                    vec! [],
+                    vec! [
+                        Opcode::GetGlobal(1),
+                        Opcode::Return
+                    ]
+                )
+            ]
+        );
+        let ee = m.into_execution_context();
+
+        println!("{}", ee.ee.to_string());
+
+        let setter: extern "C" fn (v: i64) = unsafe {
+            ::std::mem::transmute(ee.get_function_address(0))
+        };
+        let getter0: extern "C" fn () -> i64 = unsafe {
+            ::std::mem::transmute(ee.get_function_address(1))
+        };
+        let getter1: extern "C" fn () -> i64 = unsafe {
+            ::std::mem::transmute(ee.get_function_address(2))
+        };
+        setter(42);
+        assert_eq!(getter0(), 42);
+        assert_eq!(getter1(), 43);
     }
 }
