@@ -1311,6 +1311,105 @@ impl<'a> Compiler<'a> {
                                 build_stack_push(&builder, ret);
                             }
                         },
+                        Opcode::NativeInvoke(id) => {
+                            let builder = target_bb.builder();
+
+                            let native = &source_module.natives[id as usize];
+
+                            let ft = &source_module.types[native.typeidx as usize];
+                            let Type::Func(ref ft_args, ref ft_ret) = *ft;
+
+                            let mut call_args: Vec<llvm::LLVMValueRef> = ft_args.iter().rev()
+                                .map(|_| build_stack_pop(&builder))
+                                .collect();
+
+                            call_args.reverse();
+
+                            let req = builder.build_call_raw(
+                                builder.build_cast(
+                                    llvm::LLVMOpcode::LLVMIntToPtr,
+                                    builder.build_const_int(
+                                        llvm::Type::int64(ctx),
+                                        (Runtime::_jit_native_invoke_request as usize) as u64,
+                                        false
+                                    ),
+                                    llvm::Type::pointer(llvm::Type::function(
+                                        ctx,
+                                        llvm::Type::int_native(ctx), // req ptr
+                                        &[
+                                            llvm::Type::int_native(ctx) // n_args
+                                        ]
+                                    ))
+                                ),
+                                &[
+                                    builder.build_const_int(
+                                        llvm::Type::int_native(ctx),
+                                        call_args.len() as _,
+                                        false
+                                    )
+                                ]
+                            );
+                            for arg in &call_args {
+                                builder.build_call_raw(
+                                    builder.build_cast(
+                                        llvm::LLVMOpcode::LLVMIntToPtr,
+                                        builder.build_const_int(
+                                            llvm::Type::int64(ctx),
+                                            (Runtime::_jit_native_invoke_push_arg as usize) as u64,
+                                            false
+                                        ),
+                                        llvm::Type::pointer(llvm::Type::function(
+                                            ctx,
+                                            llvm::Type::void(ctx),
+                                            &[
+                                                llvm::Type::int_native(ctx), // req ptr
+                                                llvm::Type::int64(ctx) // arg
+                                            ]
+                                        ))
+                                    ),
+                                    &[
+                                        req,
+                                        *arg
+                                    ]
+                                );
+                            }
+                            let rt: &Runtime = &*rt;
+                            let ret = builder.build_call_raw(
+                                builder.build_cast(
+                                    llvm::LLVMOpcode::LLVMIntToPtr,
+                                    builder.build_const_int(
+                                        llvm::Type::int64(ctx),
+                                        (Runtime::_jit_native_invoke_complete as usize) as u64,
+                                        false
+                                    ),
+                                    llvm::Type::pointer(llvm::Type::function(
+                                        ctx,
+                                        llvm::Type::int64(ctx),
+                                        &[
+                                            llvm::Type::int_native(ctx), // rt
+                                            llvm::Type::int_native(ctx), // id
+                                            llvm::Type::int_native(ctx) // req ptr
+                                        ]
+                                    ))
+                                ),
+                                &[
+                                    builder.build_const_int(
+                                        llvm::Type::int_native(ctx),
+                                        rt as *const Runtime as usize as _,
+                                        false
+                                    ),
+                                    builder.build_const_int(
+                                        llvm::Type::int_native(ctx),
+                                        id as _,
+                                        false
+                                    ),
+                                    req
+                                ]
+                            );
+                            if ft_ret.len() > 0 {
+                                build_stack_push(&builder, ret);
+                            }
+                        },
                         Opcode::CurrentMemory => {
                             let builder = target_bb.builder();
                             build_stack_push(
@@ -1334,6 +1433,12 @@ impl<'a> Compiler<'a> {
                         Opcode::SetLocal(id) => {
                             let builder = target_bb.builder();
                             let v = build_stack_pop(&builder);
+                            build_set_local(&builder, id as _, v);
+                        },
+                        Opcode::TeeLocal(id) => {
+                            let builder = target_bb.builder();
+                            let v = build_stack_pop(&builder);
+                            build_stack_push(&builder, v);
                             build_set_local(&builder, id as _, v);
                         },
                         Opcode::I32Const(v) => {
@@ -2357,5 +2462,64 @@ mod tests {
             ::std::mem::transmute(ee.get_function_address(0))
         };
         assert_eq!(f(35), 45);
+    }
+
+    #[test]
+    fn test_native_invoke() {
+        use executor::{NativeResolver, NativeEntry};
+        use value::Value;
+
+        struct TestResolver;
+        impl NativeResolver for TestResolver {
+            fn resolve(&self, module: &str, field: &str) -> Option<NativeEntry> {
+                if module == "env" && field == "test" {
+                    Some(Box::new(|_, args| {
+                        let a = args[0].get_i32().unwrap();
+                        let b = args[1].get_i32().unwrap();
+                        Ok(Some(Value::I32(a + b)))
+                    }))
+                } else {
+                    None
+                }
+            }
+        }
+
+        let mut m = Module::default();
+        m.natives.push(Native {
+            module: "env".into(),
+            field: "test".into(),
+            typeidx: 1
+        });
+
+        let m = prepare_module_from_fn_bodies(
+            m,
+            vec! [
+                (
+                    Type::Func(vec! [ ValType::I32 ], vec! [ ValType::I32 ] ),
+                    vec! [],
+                    vec! [
+                        Opcode::GetLocal(0),
+                        Opcode::I32Const(5),
+                        Opcode::NativeInvoke(0),
+                        Opcode::Return
+                    ]
+                ),
+                ( // dummy
+                    Type::Func(vec! [ ValType::I32, ValType::I32 ], vec! [ ValType::I32 ] ),
+                    vec! [],
+                    vec! [ Opcode::Return ]
+                )
+            ]
+        );
+        m.rt.set_native_resolver(TestResolver);
+
+        let ee = m.into_execution_context();
+
+        println!("{}", ee.ee.to_string());
+
+        let f: extern "C" fn (v: i64) -> i64 = unsafe {
+            ::std::mem::transmute(ee.get_function_address(0))
+        };
+        assert_eq!(f(35), 40);
     }
 }

@@ -48,4 +48,16 @@ impl Value {
             Value::F64(v) => fp_ops::f64_convert_i64_s(v).unwrap_or(0)
         }
     }
+
+    pub fn reinterpret_as_i64(&self) -> i64 {
+        unsafe {
+            match *self {
+                Value::Undef => 0,
+                Value::I32(v) => ::prelude::mem::transmute(v as u32 as u64),
+                Value::I64(v) => v,
+                Value::F32(v) => ::prelude::mem::transmute(v as f64),
+                Value::F64(v) => ::prelude::mem::transmute(v)
+            }
+        }
+    }
 }

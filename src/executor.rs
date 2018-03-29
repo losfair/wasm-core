@@ -50,11 +50,17 @@ pub struct VirtualMachine<'a> {
 }
 
 pub struct NativeFunctionInfo {
-    f: NativeFunction,
-    typeidx: usize
+    pub f: NativeFunction,
+    pub typeidx: usize
 }
 
-pub type NativeEntry = Box<Fn(&mut RuntimeInfo, &[Value]) -> ExecuteResult<Option<Value>> + 'static>;
+pub trait GlobalStateProvider {
+    fn get_memory(&self) -> &[u8];
+    fn get_memory_mut(&mut self) -> &mut [u8];
+    fn resolve(&self, module: &str, field: &str) -> Option<NativeEntry>;
+}
+
+pub type NativeEntry = Box<Fn(&mut GlobalStateProvider, &[Value]) -> ExecuteResult<Option<Value>> + 'static>;
 
 pub enum NativeFunction {
     Uninitialized(String, String), // (module, field)
@@ -85,10 +91,10 @@ pub struct RuntimeConfig {
 }
 
 impl NativeFunction {
-    pub fn invoke(&mut self, rt: &mut RuntimeInfo, args: &[Value]) -> ExecuteResult<Option<Value>> {
+    pub fn invoke(&mut self, rt: &mut GlobalStateProvider, args: &[Value]) -> ExecuteResult<Option<Value>> {
         match *self {
             NativeFunction::Uninitialized(ref m, ref f) => {
-                let target = match rt.resolver.resolve(m.as_str(), f.as_str()) {
+                let target = match rt.resolve(m.as_str(), f.as_str()) {
                     Some(v) => v,
                     None => {
                         match NativeFunction::builtin_resolve(rt, m.as_str(), f.as_str()) {
@@ -109,12 +115,12 @@ impl NativeFunction {
         }
     }
 
-    fn builtin_resolve(rt: &RuntimeInfo, module: &str, field: &str) -> Option<NativeEntry> {
+    fn builtin_resolve(rt: &GlobalStateProvider, module: &str, field: &str) -> Option<NativeEntry> {
         if module != "env" {
             return None;
         }
 
-        let debug_print = rt.debug_print_hook;
+        //let debug_print = rt.debug_print_hook;
 
         match field {
             "__wcore_print" => Some(Box::new(move |rt, args| {
@@ -123,16 +129,17 @@ impl NativeFunction {
                 }
                 let ptr = args[0].get_i32()? as usize;
                 let len = args[1].get_i32()? as usize;
-                if ptr >= rt.mem.data.len() || ptr + len < ptr || ptr + len > rt.mem.data.len() {
+                let mem = rt.get_memory();
+                if ptr >= mem.len() || ptr + len < ptr || ptr + len > mem.len() {
                     return Err(ExecuteError::AddrOutOfBound(ptr as u32, len as u32));
                 }
-                let text = match str::from_utf8(&rt.mem.data[ptr..ptr + len]) {
+                let text = match str::from_utf8(&mem[ptr..ptr + len]) {
                     Ok(v) => v,
                     Err(_) => return Err(ExecuteError::Custom("Invalid UTF-8".to_string()))
                 };
-                if let Some(f) = debug_print {
+                /*if let Some(f) = debug_print {
                     f(text);
-                }
+                }*/
                 Ok(None)
             })),
             _ => None
@@ -165,6 +172,20 @@ impl RuntimeInfo {
 
     pub fn get_memory_mut(&mut self) -> &mut Vec<u8> {
         &mut self.mem.data
+    }
+}
+
+impl GlobalStateProvider for RuntimeInfo {
+    fn get_memory(&self) -> &[u8] {
+        self.mem.data.as_slice()
+    }
+
+    fn get_memory_mut(&mut self) -> &mut [u8] {
+        self.mem.data.as_mut_slice()
+    }
+
+    fn resolve(&self, module: &str, field: &str) -> Option<NativeEntry> {
+        self.resolver.resolve(module, field)
     }
 }
 
