@@ -72,6 +72,11 @@ impl Runtime {
         }
     }
 
+    pub fn indirect_get_function_addr(&self, id_in_table: usize) -> *const c_void {
+        let id = self.source_module.tables[0].elements[id_in_table].unwrap() as usize;
+        self.get_function_addr(id)
+    }
+
     pub fn grow_memory(&self, len_inc: usize) {
         unsafe {
             let mem: &mut Vec<u8> = &mut *self.mem.get();
@@ -92,5 +97,9 @@ impl Runtime {
 
     pub(super) extern "C" fn _jit_get_function_addr(rt: &Runtime, id: usize) -> *const c_void {
         rt.get_function_addr(id)
+    }
+
+    pub(super) extern "C" fn _jit_indirect_get_function_addr(rt: &Runtime, id: usize) -> *const c_void {
+        rt.indirect_get_function_addr(id)
     }
 }

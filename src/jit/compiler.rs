@@ -21,8 +21,8 @@ struct CompilerIntrinsics {
     check_stack: llvm::Function,
     select: llvm::Function,
     translate_pointer: llvm::Function,
-    get_function_addr: llvm::Function,
-    enforce_typeck: llvm::Function
+    indirect_get_function_addr: llvm::Function,
+    enforce_indirect_fn_typeck: llvm::Function
 }
 
 impl CompilerIntrinsics {
@@ -31,8 +31,8 @@ impl CompilerIntrinsics {
             check_stack: Self::build_check_stack(ctx, m),
             select: Self::build_select(ctx, m),
             translate_pointer: Self::build_translate_pointer(ctx, m, rt),
-            get_function_addr: Self::build_get_function_addr(ctx, m, rt),
-            enforce_typeck: Self::build_enforce_typeck(ctx, m, rt)
+            indirect_get_function_addr: Self::build_indirect_get_function_addr(ctx, m, rt),
+            enforce_indirect_fn_typeck: Self::build_enforce_indirect_fn_typeck(ctx, m, rt)
         }
     }
 
@@ -44,24 +44,26 @@ impl CompilerIntrinsics {
         panic!("Memory bounds check failed");
     }
 
-    extern "C" fn do_enforce_typeck(rt: &Runtime, expected_typeidx: usize, got_typeidx: usize) {
+    extern "C" fn do_enforce_indirect_fn_typeck(rt: &Runtime, expected_typeidx: usize, indirect_index: usize) {
+        let ty1 = &rt.source_module.types[expected_typeidx];
+
+        let got_typeidx = rt.source_module.tables[0].elements[indirect_index].unwrap() as usize;
+        let ty2 = &rt.source_module.types[got_typeidx];
+
         if expected_typeidx == got_typeidx {
             return;
         }
-
-        let ty1 = &rt.source_module.types[expected_typeidx];
-        let ty2 = &rt.source_module.types[got_typeidx];
 
         if ty1 != ty2 {
             panic!("enforce_typeck: Type mismatch: Expected {:?}, got {:?}", ty1, ty2);
         }
     }
 
-    fn build_enforce_typeck(ctx: &llvm::Context, m: &llvm::Module, rt: &Runtime) -> llvm::Function {
+    fn build_enforce_indirect_fn_typeck(ctx: &llvm::Context, m: &llvm::Module, rt: &Runtime) -> llvm::Function {
         let f: llvm::Function = llvm::Function::new(
             ctx,
             m,
-            "enforce_typeck",
+            "enforce_indirect_fn_typeck",
             llvm::Type::function(
                 ctx,
                 llvm::Type::void(ctx),
@@ -80,7 +82,7 @@ impl CompilerIntrinsics {
                     llvm::LLVMOpcode::LLVMIntToPtr,
                     builder.build_const_int(
                         llvm::Type::int64(ctx),
-                        (Self::do_enforce_typeck as usize) as u64,
+                        (Self::do_enforce_indirect_fn_typeck as usize) as u64,
                         false
                     ),
                     llvm::Type::pointer(
@@ -367,11 +369,11 @@ impl CompilerIntrinsics {
         f
     }
 
-     fn build_get_function_addr(ctx: &llvm::Context, m: &llvm::Module, rt: &Runtime) -> llvm::Function {
+     fn build_indirect_get_function_addr(ctx: &llvm::Context, m: &llvm::Module, rt: &Runtime) -> llvm::Function {
         let f: llvm::Function = llvm::Function::new(
             ctx,
             m,
-            "get_function_addr",
+            "indirect_get_function_addr",
             llvm::Type::function(
                 ctx,
                 llvm::Type::pointer(llvm::Type::void(ctx)),
@@ -389,7 +391,7 @@ impl CompilerIntrinsics {
                     llvm::LLVMOpcode::LLVMIntToPtr,
                     builder.build_const_int(
                         llvm::Type::int64(ctx),
-                        (Runtime::_jit_get_function_addr as usize) as u64,
+                        (Runtime::_jit_indirect_get_function_addr as usize) as u64,
                         false
                     ),
                     llvm::Type::pointer(
@@ -521,32 +523,13 @@ impl<'a> Compiler<'a> {
         let mut result: Vec<llvm::Function> = Vec::with_capacity(source_module.functions.len());
 
         for (i, f) in source_module.functions.iter().enumerate() {
-            let Type::Func(ref ty_args, ref ty_ret) = source_module.types[f.typeidx as usize];
-
-            let mut target_ty_args: Vec<llvm::Type> = vec! [ 
-                //llvm::Type::pointer(llvm::Type::void(ctx))
-            ];
-
-            target_ty_args.extend(
-                ty_args.iter()
-                    .map(|a| a.to_llvm_type(ctx))
-            );
+            let ty = &source_module.types[f.typeidx as usize];
 
             let target_f: llvm::Function = llvm::Function::new(
                 ctx,
                 target_module,
                 generate_function_name(i).as_str(),
-                llvm::Type::function(
-                    ctx,
-                    if ty_ret.len() == 0 {
-                        llvm::Type::void(ctx)
-                    } else if ty_ret.len() == 1 {
-                        ty_ret[0].to_llvm_type(ctx)
-                    } else {
-                        return Err(OptimizeError::Custom("Invalid number of return values".into()));
-                    },
-                    target_ty_args.as_slice()
-                )
+                ty.to_llvm_function_type(ctx)
             );
 
             result.push(target_f);
@@ -1048,13 +1031,13 @@ impl<'a> Compiler<'a> {
             }
         };
 
-        let build_get_function_addr = |
+        let build_indirect_get_function_addr = |
             builder: &llvm::Builder,
             id: llvm::LLVMValueRef
         | -> llvm::LLVMValueRef {
             unsafe {
                 builder.build_call(
-                    &intrinsics.get_function_addr,
+                    &intrinsics.indirect_get_function_addr,
                     &[
                         id
                     ]
@@ -1062,21 +1045,21 @@ impl<'a> Compiler<'a> {
             }
         };
 
-        let build_typeck = |
+        let build_indirect_fn_typeck = |
             builder: &llvm::Builder,
             expected: u64,
-            got: llvm::LLVMValueRef
+            indirect_index: llvm::LLVMValueRef
         | {
             unsafe {
                 builder.build_call(
-                    &intrinsics.enforce_typeck,
+                    &intrinsics.enforce_indirect_fn_typeck,
                     &[
                         builder.build_const_int(
                             llvm::Type::int64(ctx),
                             expected,
                             false
                         ),
-                        got
+                        indirect_index
                     ]
                 );
             }
@@ -1131,6 +1114,43 @@ impl<'a> Compiler<'a> {
 
                             let ret = builder.build_call(
                                 target_f,
+                                &call_args
+                            );
+
+                            if ft_ret.len() > 0 {
+                                build_stack_push(&builder, ret);
+                            }
+                        },
+                        Opcode::CallIndirect(typeidx) => {
+                            let builder = target_bb.builder();
+
+                            let indirect_index = build_stack_pop(&builder);
+
+                            let ft = &source_module.types[typeidx as usize];
+                            let Type::Func(ref ft_args, ref ft_ret) = *ft;
+
+                            let mut call_args: Vec<llvm::LLVMValueRef> = ft_args.iter().rev()
+                                .map(|t| {
+                                    builder.build_bitcast(
+                                        build_stack_pop(&builder),
+                                        t.to_llvm_type(ctx)
+                                    )
+                                })
+                                .collect();
+
+                            call_args.reverse();
+
+                            build_indirect_fn_typeck(
+                                &builder,
+                                typeidx as u64,
+                                indirect_index
+                            );
+                            let real_addr = build_indirect_get_function_addr(&builder, indirect_index);
+                            let ret = builder.build_call_raw(
+                                builder.build_bitcast(
+                                    real_addr,
+                                    llvm::Type::pointer(ft.to_llvm_function_type(ctx))
+                                ),
                                 &call_args
                             );
 
@@ -1570,16 +1590,39 @@ impl ValType {
     }
 }
 
+impl Type {
+    fn to_llvm_function_type(&self, ctx: &llvm::Context) -> llvm::Type {
+        let Type::Func(ref ft_args, ref ft_ret) = *self;
+
+        let target_ft_args: Vec<llvm::Type> = ft_args
+            .iter()
+            .map(|t| t.to_llvm_type(ctx))
+            .collect();
+
+        llvm::Type::function(
+            ctx,
+            if ft_ret.len() == 0 {
+                llvm::Type::void(ctx)
+            } else if ft_ret.len() == 1 {
+                ft_ret[0].to_llvm_type(ctx)
+            } else {
+                panic!("Invalid number of return values");
+            },
+            target_ft_args.as_slice()
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::panic::{catch_unwind, AssertUnwindSafe};
     use test::Bencher;
 
-    fn build_module_from_fn_bodies(
+    fn prepare_module_from_fn_bodies(
+        mut m: Module,
         fns: Vec<(Type, Vec<ValType>, Vec<Opcode>)>
     ) -> CompiledModule {
-        let mut m = Module::default();
         for (i, f) in fns.into_iter().enumerate() {
             m.types.push(f.0);
             m.functions.push(Function {
@@ -1595,8 +1638,13 @@ mod tests {
         let target_module = compiler.compile().unwrap();
 
         target_module.module.optimize();
-
         target_module
+    }
+
+    fn build_module_from_fn_bodies(
+        fns: Vec<(Type, Vec<ValType>, Vec<Opcode>)>
+    ) -> CompiledModule {
+        prepare_module_from_fn_bodies(Module::default(), fns)
     }
 
     fn build_module_from_fn_body(ty: Type, locals: Vec<ValType>, body: Vec<Opcode>) -> CompiledModule {
@@ -2048,5 +2096,52 @@ mod tests {
         };
         assert_eq!(f(51328519), 13831);
         assert_eq!(f(3786093) as u32, 4294952301);
+    }
+
+    #[test]
+    fn test_call_indirect() {
+        let mut m = Module::default();
+        m.tables.push(Table {
+            min: 1,
+            max: None,
+            elements: vec! [ Some(1) ]
+        });
+
+        let m = prepare_module_from_fn_bodies(
+            m,
+            vec! [
+                (
+                    Type::Func(vec! [ ValType::I32 ], vec! [ ValType::I32 ] ),
+                    vec! [],
+                    vec! [
+                        Opcode::GetLocal(0),
+                        Opcode::I32Const(5),
+                        Opcode::I32Const(0), // indirect_index = 0
+                        Opcode::CallIndirect(1), // typeidx = 1
+                        Opcode::Return
+                    ]
+                ),
+                (
+                    Type::Func(vec! [ ValType::I32, ValType::I32 ], vec! [ ValType::I32 ] ),
+                    vec! [],
+                    vec! [
+                        Opcode::GetLocal(0),
+                        Opcode::GetLocal(1),
+                        Opcode::GetLocal(1),
+                        Opcode::I32Add,
+                        Opcode::I32Add,
+                        Opcode::Return // Local(0) + Local(1) * 2
+                    ]
+                )
+            ]
+        );
+        let ee = m.into_execution_context();
+
+        println!("{}", ee.ee.to_string());
+
+        let f: extern "C" fn (v: i64) -> i64 = unsafe {
+            ::std::mem::transmute(ee.get_function_address(0))
+        };
+        assert_eq!(f(35), 45);
     }
 }
