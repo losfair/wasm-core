@@ -24,6 +24,7 @@ struct CompilerIntrinsics {
     clz_i64: llvm::Function,
     ctz_i32: llvm::Function,
     ctz_i64: llvm::Function,
+    checked_unreachable: llvm::Function,
     check_stack: llvm::Function,
     select: llvm::Function,
     translate_pointer: llvm::Function,
@@ -112,6 +113,7 @@ impl CompilerIntrinsics {
                     ]
                 )
             ),
+            checked_unreachable: Self::build_checked_unreachable(ctx, m),
             check_stack: Self::build_check_stack(ctx, m),
             select: Self::build_select(ctx, m),
             translate_pointer: Self::build_translate_pointer(ctx, m, rt),
@@ -130,6 +132,10 @@ impl CompilerIntrinsics {
         panic!("Memory bounds check failed");
     }
 
+    extern "C" fn on_checked_unreachable() {
+        panic!("Unreachable executed");
+    }
+
     extern "C" fn do_enforce_indirect_fn_typeck(rt: &Runtime, expected_typeidx: usize, indirect_index: usize) {
         let ty1 = &rt.source_module.types[expected_typeidx];
 
@@ -143,6 +149,46 @@ impl CompilerIntrinsics {
         if ty1 != ty2 {
             panic!("enforce_typeck: Type mismatch: Expected {:?}, got {:?}", ty1, ty2);
         }
+    }
+
+    fn build_checked_unreachable(ctx: &llvm::Context, m: &llvm::Module) -> llvm::Function {
+        let f: llvm::Function = llvm::Function::new(
+            ctx,
+            m,
+            "checked_unreachable",
+            llvm::Type::function(
+                ctx,
+                llvm::Type::void(ctx),
+                &[]
+            )
+        );
+        let initial_bb = llvm::BasicBlock::new(&f);
+
+        unsafe {
+            let builder = initial_bb.builder();
+            builder.build_call_raw(
+                builder.build_cast(
+                    llvm::LLVMOpcode::LLVMIntToPtr,
+                    builder.build_const_int(
+                        llvm::Type::int64(ctx),
+                        Self::on_checked_unreachable as usize as u64,
+                        false
+                    ),
+                    llvm::Type::pointer(
+                        llvm::Type::function(
+                            ctx,
+                            llvm::Type::void(ctx),
+                            &[]
+                        )
+                    )
+                ),
+                &[]
+            );
+            builder.build_unreachable();
+        }
+
+        f.verify();
+        f
     }
 
     fn build_current_memory(ctx: &llvm::Context, m: &llvm::Module, rt: &Runtime) -> llvm::Function {
@@ -1017,9 +1063,13 @@ impl<'a> Compiler<'a> {
         | {
             unsafe {
                 let v = build_stack_pop_i32(&builder);
-                build_stack_push_i32(
+                build_stack_push(
                     &builder,
-                    op(builder, v)
+                    builder.build_cast(
+                        llvm::LLVMOpcode::LLVMZExt,
+                        op(builder, v),
+                        llvm::Type::int64(ctx)
+                    )
                 );
             }
         };
@@ -1050,6 +1100,23 @@ impl<'a> Compiler<'a> {
                     builder.build_cast(
                         llvm::LLVMOpcode::LLVMZExt,
                         op(builder, a, b),
+                        llvm::Type::int64(ctx)
+                    )
+                );
+            }
+        };
+
+        let build_i64_unop = |
+            builder: &llvm::Builder,
+            op: &Fn(&llvm::Builder, llvm::LLVMValueRef) -> llvm::LLVMValueRef
+        | {
+            unsafe {
+                let v = build_stack_pop(&builder);
+                build_stack_push(
+                    &builder,
+                    builder.build_cast(
+                        llvm::LLVMOpcode::LLVMZExt,
+                        op(builder, v),
                         llvm::Type::int64(ctx)
                     )
                 );
@@ -1520,6 +1587,13 @@ impl<'a> Compiler<'a> {
                                 build_grow_memory(&builder, n_pages)
                             );
                         },
+                        Opcode::Unreachable => {
+                            let builder = target_bb.builder();
+                            builder.build_call(
+                                &intrinsics.checked_unreachable,
+                                &[]
+                            );
+                        },
                         Opcode::GetGlobal(id) => {
                             let id = id as usize;
                             if id >= source_module.globals.len() {
@@ -1727,6 +1801,37 @@ impl<'a> Compiler<'a> {
                                 &target_bb.builder(),
                                 &|t, a, b| t.build_ashr(a, b)
                             );
+                        },
+                        Opcode::I32And => {
+                            build_i32_binop(
+                                &target_bb.builder(),
+                                &|t, a, b| t.build_and(a, b)
+                            );
+                        },
+                        Opcode::I32Or => {
+                            build_i32_binop(
+                                &target_bb.builder(),
+                                &|t, a, b| t.build_or(a, b)
+                            );
+                        },
+                        Opcode::I32Xor => {
+                            build_i32_binop(
+                                &target_bb.builder(),
+                                &|t, a, b| t.build_xor(a, b)
+                            );
+                        },
+                        Opcode::I32Eqz => {
+                            let builder = target_bb.builder();
+                            let v = builder.build_icmp(
+                                llvm::LLVMIntEQ,
+                                build_stack_pop_i32(&builder),
+                                builder.build_const_int(
+                                    llvm::Type::int32(ctx),
+                                    0,
+                                    false
+                                )
+                            );
+                            build_stack_push_i32(&builder, v);
                         },
                         Opcode::I32Eq => {
                             build_i32_relop(
@@ -1987,7 +2092,491 @@ impl<'a> Compiler<'a> {
                             );
                             build_stack_push(&builder, v);
                         },
-                        _ => panic!("Opcode not implemented: {:?}", op)
+                        Opcode::I64Popcnt => {
+                            build_i64_unop(
+                                &target_bb.builder(),
+                                &|t, v| t.build_call(
+                                    &intrinsics.popcnt_i64,
+                                    &[
+                                        v
+                                    ]
+                                )
+                            );
+                        },
+                        Opcode::I64Clz => {
+                            build_i64_unop(
+                                &target_bb.builder(),
+                                &|t, v| t.build_call(
+                                    &intrinsics.clz_i64,
+                                    &[
+                                        v,
+                                        t.build_const_int(
+                                            llvm::Type::int1(ctx),
+                                            0,
+                                            false
+                                        )
+                                    ]
+                                )
+                            );
+                        },
+                        Opcode::I64Ctz => {
+                            build_i64_unop(
+                                &target_bb.builder(),
+                                &|t, v| t.build_call(
+                                    &intrinsics.ctz_i64,
+                                    &[
+                                        v,
+                                        t.build_const_int(
+                                            llvm::Type::int1(ctx),
+                                            0,
+                                            false
+                                        )
+                                    ]
+                                )
+                            );
+                        },
+                        Opcode::I64Add => {
+                            build_i64_binop(
+                                &target_bb.builder(),
+                                &|t, a, b| t.build_add(a, b)
+                            );
+                        },
+                        Opcode::I64Sub => {
+                            build_i64_binop(
+                                &target_bb.builder(),
+                                &|t, a, b| t.build_sub(a, b)
+                            );
+                        },
+                        Opcode::I64Mul => {
+                            build_i64_binop(
+                                &target_bb.builder(),
+                                &|t, a, b| t.build_mul(a, b)
+                            );
+                        },
+                        Opcode::I64DivU => {
+                            build_i64_binop(
+                                &target_bb.builder(),
+                                &|t, a, b| t.build_udiv(a, b)
+                            );
+                        },
+                        Opcode::I64DivS => {
+                            build_i64_binop(
+                                &target_bb.builder(),
+                                &|t, a, b| t.build_sdiv(a, b)
+                            );
+                        },
+                        Opcode::I64RemU => {
+                            build_i64_binop(
+                                &target_bb.builder(),
+                                &|t, a, b| t.build_urem(a, b)
+                            );
+                        },
+                        Opcode::I64RemS => {
+                            build_i64_binop(
+                                &target_bb.builder(),
+                                &|t, a, b| t.build_srem(a, b)
+                            );
+                        },
+                        Opcode::I64Shl => {
+                            build_i64_binop(
+                                &target_bb.builder(),
+                                &|t, a, b| t.build_shl(a, b)
+                            );
+                        },
+                        Opcode::I64ShrU => {
+                            build_i64_binop(
+                                &target_bb.builder(),
+                                &|t, a, b| t.build_lshr(a, b)
+                            );
+                        },
+                        Opcode::I64ShrS => {
+                            build_i64_binop(
+                                &target_bb.builder(),
+                                &|t, a, b| t.build_ashr(a, b)
+                            );
+                        },
+                        Opcode::I64And => {
+                            build_i64_binop(
+                                &target_bb.builder(),
+                                &|t, a, b| t.build_and(a, b)
+                            );
+                        },
+                        Opcode::I64Or => {
+                            build_i64_binop(
+                                &target_bb.builder(),
+                                &|t, a, b| t.build_or(a, b)
+                            );
+                        },
+                        Opcode::I64Xor => {
+                            build_i64_binop(
+                                &target_bb.builder(),
+                                &|t, a, b| t.build_xor(a, b)
+                            );
+                        },
+                        Opcode::I64Eqz => {
+                            let builder = target_bb.builder();
+                            let v = builder.build_icmp(
+                                llvm::LLVMIntEQ,
+                                build_stack_pop(&builder),
+                                builder.build_const_int(
+                                    llvm::Type::int64(ctx),
+                                    0,
+                                    false
+                                )
+                            );
+                            build_stack_push_i32(&builder, v);
+                        },
+                        Opcode::I64Eq => {
+                            build_i64_relop(
+                                &target_bb.builder(),
+                                &|t, a, b| t.build_icmp(
+                                    llvm::LLVMIntEQ,
+                                    a,
+                                    b
+                                )
+                            );
+                        },
+                        Opcode::I64Ne => {
+                            build_i64_relop(
+                                &target_bb.builder(),
+                                &|t, a, b| t.build_icmp(
+                                    llvm::LLVMIntNE,
+                                    a,
+                                    b
+                                )
+                            );
+                        },
+                        Opcode::I64LtU => {
+                            build_i64_relop(
+                                &target_bb.builder(),
+                                &|t, a, b| t.build_icmp(
+                                    llvm::LLVMIntULT,
+                                    a,
+                                    b
+                                )
+                            );
+                        },
+                        Opcode::I64LtS => {
+                            build_i64_relop(
+                                &target_bb.builder(),
+                                &|t, a, b| t.build_icmp(
+                                    llvm::LLVMIntSLT,
+                                    a,
+                                    b
+                                )
+                            );
+                        },
+                        Opcode::I64LeU => {
+                            build_i64_relop(
+                                &target_bb.builder(),
+                                &|t, a, b| t.build_icmp(
+                                    llvm::LLVMIntULE,
+                                    a,
+                                    b
+                                )
+                            );
+                        },
+                        Opcode::I64LeS => {
+                            build_i64_relop(
+                                &target_bb.builder(),
+                                &|t, a, b| t.build_icmp(
+                                    llvm::LLVMIntSLE,
+                                    a,
+                                    b
+                                )
+                            );
+                        },
+                        Opcode::I64GtU => {
+                            build_i64_relop(
+                                &target_bb.builder(),
+                                &|t, a, b| t.build_icmp(
+                                    llvm::LLVMIntUGT,
+                                    a,
+                                    b
+                                )
+                            );
+                        },
+                        Opcode::I64GtS => {
+                            build_i64_relop(
+                                &target_bb.builder(),
+                                &|t, a, b| t.build_icmp(
+                                    llvm::LLVMIntSGT,
+                                    a,
+                                    b
+                                )
+                            );
+                        },
+                        Opcode::I64GeU => {
+                            build_i64_relop(
+                                &target_bb.builder(),
+                                &|t, a, b| t.build_icmp(
+                                    llvm::LLVMIntUGE,
+                                    a,
+                                    b
+                                )
+                            );
+                        },
+                        Opcode::I64GeS => {
+                            build_i64_relop(
+                                &target_bb.builder(),
+                                &|t, a, b| t.build_icmp(
+                                    llvm::LLVMIntSGE,
+                                    a,
+                                    b
+                                )
+                            );
+                        },
+                        Opcode::I64ExtendI32U => {
+                            let builder = target_bb.builder();
+                            build_stack_push(
+                                &builder,
+                                builder.build_cast(
+                                    llvm::LLVMOpcode::LLVMZExt,
+                                    build_stack_pop_i32(&builder),
+                                    llvm::Type::int64(ctx)
+                                )
+                            );
+                        },
+                        Opcode::I64ExtendI32S => {
+                            let builder = target_bb.builder();
+                            build_stack_push(
+                                &builder,
+                                builder.build_cast(
+                                    llvm::LLVMOpcode::LLVMSExt,
+                                    build_stack_pop_i32(&builder),
+                                    llvm::Type::int64(ctx)
+                                )
+                            );
+                        },
+                        Opcode::I64Load(ref m) => {
+                            let builder = target_bb.builder();
+                            let addr = build_stack_pop(&builder);
+                            build_stack_push(&builder, build_std_load(
+                                &builder,
+                                8,
+                                false, // signed
+                                builder.build_add(
+                                    addr,
+                                    builder.build_const_int(
+                                        llvm::Type::int64(ctx),
+                                        m.offset as _,
+                                        false
+                                    )
+                                )
+                            ));
+                        },
+                        Opcode::I64Load8U(ref m) => {
+                            let builder = target_bb.builder();
+                            let addr = build_stack_pop(&builder);
+                            build_stack_push(&builder, build_std_load(
+                                &builder,
+                                1,
+                                false, // signed
+                                builder.build_add(
+                                    addr,
+                                    builder.build_const_int(
+                                        llvm::Type::int64(ctx),
+                                        m.offset as _,
+                                        false
+                                    )
+                                )
+                            ));
+                        },
+                        Opcode::I64Load8S(ref m) => {
+                            let builder = target_bb.builder();
+                            let addr = build_stack_pop(&builder);
+                            build_stack_push(&builder, build_std_load(
+                                &builder,
+                                1,
+                                true, // signed
+                                builder.build_add(
+                                    addr,
+                                    builder.build_const_int(
+                                        llvm::Type::int64(ctx),
+                                        m.offset as _,
+                                        false
+                                    )
+                                )
+                            ));
+                        },
+                        Opcode::I64Load16U(ref m) => {
+                            let builder = target_bb.builder();
+                            let addr = build_stack_pop(&builder);
+                            build_stack_push(&builder, build_std_load(
+                                &builder,
+                                2,
+                                false, // signed
+                                builder.build_add(
+                                    addr,
+                                    builder.build_const_int(
+                                        llvm::Type::int64(ctx),
+                                        m.offset as _,
+                                        false
+                                    )
+                                )
+                            ));
+                        },
+                        Opcode::I64Load16S(ref m) => {
+                            let builder = target_bb.builder();
+                            let addr = build_stack_pop(&builder);
+                            build_stack_push(&builder, build_std_load(
+                                &builder,
+                                2,
+                                true, // signed
+                                builder.build_add(
+                                    addr,
+                                    builder.build_const_int(
+                                        llvm::Type::int64(ctx),
+                                        m.offset as _,
+                                        false
+                                    )
+                                )
+                            ));
+                        },
+                        Opcode::I64Load32U(ref m) => {
+                            let builder = target_bb.builder();
+                            let addr = build_stack_pop(&builder);
+                            build_stack_push(&builder, build_std_load(
+                                &builder,
+                                4,
+                                false, // signed
+                                builder.build_add(
+                                    addr,
+                                    builder.build_const_int(
+                                        llvm::Type::int64(ctx),
+                                        m.offset as _,
+                                        false
+                                    )
+                                )
+                            ));
+                        },
+                        Opcode::I64Load32S(ref m) => {
+                            let builder = target_bb.builder();
+                            let addr = build_stack_pop(&builder);
+                            build_stack_push(&builder, build_std_load(
+                                &builder,
+                                4,
+                                true, // signed
+                                builder.build_add(
+                                    addr,
+                                    builder.build_const_int(
+                                        llvm::Type::int64(ctx),
+                                        m.offset as _,
+                                        false
+                                    )
+                                )
+                            ));
+                        },
+                        Opcode::I64Store(ref m) => {
+                            let builder = target_bb.builder();
+                            let val = build_stack_pop(&builder);
+                            let addr = build_stack_pop(&builder);
+                            build_std_store(
+                                &builder,
+                                8,
+                                val,
+                                builder.build_add(
+                                    addr,
+                                    builder.build_const_int(
+                                        llvm::Type::int64(ctx),
+                                        m.offset as _,
+                                        false
+                                    )
+                                )
+                            );
+                        },
+                        Opcode::I64Store8(ref m) => {
+                            let builder = target_bb.builder();
+                            let val = build_stack_pop(&builder);
+                            let addr = build_stack_pop(&builder);
+                            build_std_store(
+                                &builder,
+                                1,
+                                val,
+                                builder.build_add(
+                                    addr,
+                                    builder.build_const_int(
+                                        llvm::Type::int64(ctx),
+                                        m.offset as _,
+                                        false
+                                    )
+                                )
+                            );
+                        },
+                        Opcode::I64Store16(ref m) => {
+                            let builder = target_bb.builder();
+                            let val = build_stack_pop(&builder);
+                            let addr = build_stack_pop(&builder);
+                            build_std_store(
+                                &builder,
+                                2,
+                                val,
+                                builder.build_add(
+                                    addr,
+                                    builder.build_const_int(
+                                        llvm::Type::int64(ctx),
+                                        m.offset as _,
+                                        false
+                                    )
+                                )
+                            );
+                        },
+                        Opcode::I64Store32(ref m) => {
+                            let builder = target_bb.builder();
+                            let val = build_stack_pop(&builder);
+                            let addr = build_stack_pop(&builder);
+                            build_std_store(
+                                &builder,
+                                4,
+                                val,
+                                builder.build_add(
+                                    addr,
+                                    builder.build_const_int(
+                                        llvm::Type::int64(ctx),
+                                        m.offset as _,
+                                        false
+                                    )
+                                )
+                            );
+                        },
+                        Opcode::F32Const(v) => {
+                            let builder = target_bb.builder();
+                            build_stack_push_i32(
+                                &builder,
+                                builder.build_const_int(
+                                    llvm::Type::int32(ctx),
+                                    v as _,
+                                    false
+                                )
+                            );
+                        },
+                        Opcode::F64Const(v) => {
+                            let builder = target_bb.builder();
+                            build_stack_push(
+                                &builder,
+                                builder.build_const_int(
+                                    llvm::Type::int64(ctx),
+                                    v as _,
+                                    false
+                                )
+                            );
+                        },
+                        Opcode::Memcpy | Opcode::NotImplemented(_)
+                            | Opcode::I32Rotl | Opcode::I32Rotr
+                            | Opcode::I64Rotl | Opcode::I64Rotr => {
+                            // not implemented
+                            let builder = target_bb.builder();
+                            builder.build_call(
+                                &intrinsics.checked_unreachable,
+                                &[]
+                            );
+                        },
+                        Opcode::Return
+                            | Opcode::Jmp(_)
+                            | Opcode::JmpIf(_)
+                            | Opcode::JmpEither(_, _)
+                            | Opcode::JmpTable(_, _) => unreachable!()
+                        //_ => panic!("Opcode not implemented: {:?}", op)
                     }
                 }
             }
@@ -2872,5 +3461,28 @@ mod tests {
         setter(42);
         assert_eq!(getter0(), 42);
         assert_eq!(getter1(), 43);
+    }
+
+    #[test]
+    fn test_unreachable() {
+        let ee = build_ee_from_fn_body(
+            Type::Func(vec! [ ], vec! [ ]),
+            vec! [],
+            vec! [
+                Opcode::Unreachable,
+                Opcode::Return
+            ]
+        );
+
+        //println!("{}", ee.to_string());
+
+        let f: extern "C" fn () = unsafe {
+            ::std::mem::transmute(ee.get_function_address(0))
+        };
+        let ret = catch_unwind(AssertUnwindSafe(|| f()));
+        match ret {
+            Ok(_) => panic!("Expecting panic"),
+            Err(_) => {}
+        }
     }
 }
