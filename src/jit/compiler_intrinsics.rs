@@ -116,8 +116,8 @@ impl CompilerIntrinsics {
         panic!("Stack check failed");
     }
 
-    extern "C" fn mem_bounds_check_failed() {
-        panic!("Memory bounds check failed");
+    extern "C" fn mem_bounds_check_failed(vaddr: u64, len: u64) {
+        panic!("Memory bounds check failed (vaddr = {}, len = {})", vaddr, len);
     }
 
     extern "C" fn on_checked_unreachable() {
@@ -603,11 +603,17 @@ impl CompilerIntrinsics {
                     llvm::Type::function(
                         ctx,
                         llvm::Type::void(ctx),
-                        &[]
+                        &[
+                            llvm::Type::int64(ctx),
+                            llvm::Type::int64(ctx)
+                        ]
                     )
                 )
             );
-            builder.build_call_raw(call_target, &[]);
+            builder.build_call_raw(call_target, &[
+                f.get_param(0),
+                f.get_param(1)
+            ]);
             builder.build_unreachable();
         }
 
