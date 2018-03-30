@@ -3,6 +3,8 @@ extern crate wasm_translator as translator;
 mod syscall;
 mod stream;
 mod utils;
+mod jit;
+mod resolver;
 
 use std::fs::File;
 use std::env;
@@ -18,23 +20,7 @@ use translator::wasm_core::cfgraph::CFGraph;
 use translator::config::ModuleConfig;
 
 use syscall::SyscallResolver;
-
-struct PrivilegedResolver {
-    syscall_resolver: SyscallResolver
-}
-
-impl NativeResolver for PrivilegedResolver {
-    fn resolve(&self, module: &str, field: &str) -> Option<NativeEntry> {
-        //eprintln!("Resolve: {} {}", module, field);
-        if module != "env" {
-            return None;
-        }
-
-        match field {
-            _ => self.syscall_resolver.resolve(module, field)
-        }
-    }
-}
+use resolver::PrivilegedResolver;
 
 fn main() {
     let mut args = env::args();
@@ -58,6 +44,9 @@ fn main() {
         f.body.opcodes = cfg.gen_opcodes();
     }
 
+    jit::run_with_jit(&module);
+
+    /*
     let mut call_args: Vec<String> = Vec::new();
     for arg in args {
         call_args.push(arg);
@@ -111,6 +100,7 @@ fn main() {
             eprintln!("{:?}", vm.last_function());
         }
     }
+    */
 }
 
 fn write_main_args_emscripten(vm: &mut VirtualMachine, args: &[String]) -> i32 {

@@ -3,7 +3,7 @@ use std::cell::RefCell;
 use translator::wasm_core::executor::{
     NativeEntry,
     NativeResolver,
-    RuntimeInfo,
+    GlobalStateProvider,
     ExecuteResult,
     ExecuteError
 };
@@ -28,6 +28,7 @@ impl Syscall {
     pub fn from_id(id: u32) -> Option<Syscall> {
         match id {
             54 => Some(Syscall::Ioctl),
+            145 => Some(Syscall::Readv),
             146 => Some(Syscall::Writev),
             _ => None
         }
@@ -70,12 +71,34 @@ impl NativeResolver for SyscallResolver {
 
         Some(match sc {
             Syscall::Ioctl => wrap_sc(|rt, varargs| {
-                Ok(-1)
+                Ok(0)
             }),
             Syscall::Readv => wrap_sc(|rt, varargs| {
-                let fd = varargs.next(rt.get_memory())?;
-                eprintln!("readv {}", fd);
-                Ok(-1)
+                let fd = varargs.next(rt.get_memory())? as u32;
+
+                let iov = varargs.next(rt.get_memory())? as u32;
+                let iovcnt = varargs.next(rt.get_memory())? as usize;
+
+                let mut read_cnt: i32 = 0;
+
+                for i in 0..iovcnt {
+                    let mem = rt.get_memory_mut();
+
+                    let base = iov + (i * 8) as u32;
+                    let iov_base = utils::read_mem_i32(mem, base)? as usize;
+                    let iov_len = utils::read_mem_i32(mem, base + 4)? as usize;
+
+                    let data = &mut mem[iov_base..iov_base + iov_len];
+                    let ret = STREAM_MANAGER.with(|sm| {
+                        sm.borrow_mut().read_stream(fd, data)
+                    });
+
+                    if ret < 0 {
+                        return Ok(ret);
+                    }
+                    read_cnt += ret;
+                }
+                Ok(read_cnt)
             }),
             Syscall::Writev => wrap_sc(|rt, varargs| {
                 let fd = varargs.next(rt.get_memory())? as u32;
@@ -108,7 +131,7 @@ impl NativeResolver for SyscallResolver {
     }
 }
 
-fn wrap_sc<F: Fn(&mut RuntimeInfo, &mut VarargInfo) -> ExecuteResult<i32> + 'static>(
+fn wrap_sc<F: Fn(&mut GlobalStateProvider, &mut VarargInfo) -> ExecuteResult<i32> + 'static>(
     f: F
 ) -> NativeEntry {
     Box::new(move |rt, args| {
