@@ -257,6 +257,31 @@ impl<'a> Compiler<'a> {
             );
             locals_base = builder.build_alloca(locals_ty);
 
+            for i in 0..locals_ty_info.len() {
+                builder.build_store(
+                    builder.build_const_int(
+                        llvm::Type::int64(ctx),
+                        0,
+                        false
+                    ),
+                    builder.build_gep(
+                        locals_base,
+                        &[
+                            builder.build_const_int(
+                                llvm::Type::int32(ctx),
+                                0,
+                                false
+                            ),
+                            builder.build_const_int(
+                                llvm::Type::int32(ctx),
+                                i as _,
+                                false
+                            )
+                        ]
+                    )
+                );
+            }
+
             for i in 0..source_func_args_ty.len() {
                 builder.build_store(
                     target_func.get_param(i),
@@ -2086,6 +2111,9 @@ impl<'a> Compiler<'a> {
 }
 
 impl ValType {
+    // FIXME:
+    // All stack/local values should be int64.
+    // Therefore this is no longer required.
     fn to_llvm_type(&self, ctx: &llvm::Context) -> llvm::Type {
         match *self {
             ValType::I32 | ValType::I64
