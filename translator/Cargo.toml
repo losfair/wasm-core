@@ -2,6 +2,9 @@
 name = "wasm-translator"
 version = "0.1.0"
 authors = ["losfair <zhy20000919@hotmail.com>"]
+description = "Portable WebAssembly implementation (translator)"
+license = "LGPL-3.0"
+keywords = ["wasm", "webassembly"]
 
 [dependencies]
 wasm-core = { version = "0.2.0", features = ["jit"] }
