@@ -211,6 +211,83 @@ pub fn translate_opcodes(ops: &[elements::Opcode]) -> Vec<wasm_core::opcode::Opc
             PwOp::I64Store16(align, offset) => result.push(WcOp::I64Store16(Memarg { offset: offset, align: align })),
             PwOp::I64Store32(align, offset) => result.push(WcOp::I64Store32(Memarg { offset: offset, align: align })),
 
+            PwOp::F32Const(v) => {
+                result.push(WcOp::F32Const(v));
+            },
+            PwOp::F64Const(v) => {
+                result.push(WcOp::F64Const(v));
+            },
+            PwOp::F32Load(align, offset) => {
+                result.push(WcOp::I32Load(Memarg { offset: offset, align: align }));
+                result.push(WcOp::I32ReinterpretF32);
+            },
+            PwOp::F64Load(align, offset) => {
+                result.push(WcOp::I64Load(Memarg { offset: offset, align: align }));
+                result.push(WcOp::I64ReinterpretF64);
+            },
+            PwOp::F32ReinterpretI32 => result.push(WcOp::F32ReinterpretI32),
+            PwOp::F64ReinterpretI64 => result.push(WcOp::F64ReinterpretI64),
+            PwOp::I32ReinterpretF32 => result.push(WcOp::I32ReinterpretF32),
+            PwOp::I64ReinterpretF64 => result.push(WcOp::I64ReinterpretF64),
+            PwOp::I32TruncSF32 => result.push(WcOp::I32TruncSF32),
+            PwOp::I32TruncUF32 => result.push(WcOp::I32TruncUF32),
+            PwOp::I32TruncSF64 => result.push(WcOp::I32TruncSF64),
+            PwOp::I32TruncUF64 => result.push(WcOp::I32TruncUF64),
+            PwOp::I64TruncSF32 => result.push(WcOp::I64TruncSF32),
+            PwOp::I64TruncUF32 => result.push(WcOp::I64TruncUF32),
+            PwOp::I64TruncSF64 => result.push(WcOp::I64TruncSF64),
+            PwOp::I64TruncUF64 => result.push(WcOp::I64TruncUF64),
+            PwOp::F32ConvertSI32 => result.push(WcOp::F32ConvertSI32),
+            PwOp::F32ConvertUI32 => result.push(WcOp::F32ConvertUI32),
+            PwOp::F32ConvertSI64 => result.push(WcOp::F32ConvertSI64),
+            PwOp::F32ConvertUI64 => result.push(WcOp::F32ConvertUI64),
+            PwOp::F64ConvertSI32 => result.push(WcOp::F64ConvertSI32),
+            PwOp::F64ConvertUI32 => result.push(WcOp::F64ConvertUI32),
+            PwOp::F64ConvertSI64 => result.push(WcOp::F64ConvertSI64),
+            PwOp::F64ConvertUI64 => result.push(WcOp::F64ConvertUI64),
+            PwOp::F32DemoteF64 => result.push(WcOp::F32DemoteF64),
+            PwOp::F64PromoteF32 => result.push(WcOp::F64PromoteF32),
+            PwOp::F32Abs => result.push(WcOp::F32Abs),
+            PwOp::F32Neg => result.push(WcOp::F32Neg),
+            PwOp::F32Ceil => result.push(WcOp::F32Ceil),
+            PwOp::F32Floor => result.push(WcOp::F32Floor),
+            PwOp::F32Trunc => result.push(WcOp::F32Trunc),
+            PwOp::F32Nearest => result.push(WcOp::F32Nearest),
+            PwOp::F32Sqrt => result.push(WcOp::F32Sqrt),
+            PwOp::F32Add => result.push(WcOp::F32Add),
+            PwOp::F32Sub => result.push(WcOp::F32Sub),
+            PwOp::F32Mul => result.push(WcOp::F32Mul),
+            PwOp::F32Div => result.push(WcOp::F32Div),
+            PwOp::F32Min => result.push(WcOp::F32Min),
+            PwOp::F32Max => result.push(WcOp::F32Max),
+            PwOp::F32Copysign => result.push(WcOp::F32Copysign),
+            PwOp::F32Eq => result.push(WcOp::F32Eq),
+            PwOp::F32Ne => result.push(WcOp::F32Ne),
+            PwOp::F32Lt => result.push(WcOp::F32Lt),
+            PwOp::F32Gt => result.push(WcOp::F32Gt),
+            PwOp::F32Le => result.push(WcOp::F32Le),
+            PwOp::F32Ge => result.push(WcOp::F32Ge),
+            PwOp::F64Abs => result.push(WcOp::F64Abs),
+            PwOp::F64Neg => result.push(WcOp::F64Neg),
+            PwOp::F64Ceil => result.push(WcOp::F64Ceil),
+            PwOp::F64Floor => result.push(WcOp::F64Floor),
+            PwOp::F64Trunc => result.push(WcOp::F64Trunc),
+            PwOp::F64Nearest => result.push(WcOp::F64Nearest),
+            PwOp::F64Sqrt => result.push(WcOp::F64Sqrt),
+            PwOp::F64Add => result.push(WcOp::F64Add),
+            PwOp::F64Sub => result.push(WcOp::F64Sub),
+            PwOp::F64Mul => result.push(WcOp::F64Mul),
+            PwOp::F64Div => result.push(WcOp::F64Div),
+            PwOp::F64Min => result.push(WcOp::F64Min),
+            PwOp::F64Max => result.push(WcOp::F64Max),
+            PwOp::F64Copysign => result.push(WcOp::F64Copysign),
+            PwOp::F64Eq => result.push(WcOp::F64Eq),
+            PwOp::F64Ne => result.push(WcOp::F64Ne),
+            PwOp::F64Lt => result.push(WcOp::F64Lt),
+            PwOp::F64Gt => result.push(WcOp::F64Gt),
+            PwOp::F64Le => result.push(WcOp::F64Le),
+            PwOp::F64Ge => result.push(WcOp::F64Ge),
+
             PwOp::End => {
                 if let Some(label) = labels.pop() {
                     if let LabelType::If(instr_id) = label.ty {
@@ -294,12 +371,6 @@ pub fn translate_opcodes(ops: &[elements::Opcode]) -> Vec<wasm_core::opcode::Opc
                 let label = labels.iter_mut().rev().nth(otherwise as usize).expect("Branch target out of bound");
                 label.continuations.push(Continuation::brtable(result.len(), targets.len()));
                 result.push(WcOp::JmpTable(jmp_targets, 0xffffffff));
-            },
-            PwOp::F32Const(v) => {
-                result.push(WcOp::F32Const(v));
-            },
-            PwOp::F64Const(v) => {
-                result.push(WcOp::F64Const(v));
             },
             _ => {
                 dprintln!("Warning: Generating trap for unimplemented opcode: {:?}", op);
