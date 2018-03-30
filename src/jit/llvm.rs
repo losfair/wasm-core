@@ -108,7 +108,7 @@ impl Module {
                 let pmb = LLVMPassManagerBuilderCreate();
 
                 LLVMPassManagerBuilderSetOptLevel(pmb, 1);
-                LLVMPassManagerBuilderUseInlinerWithThreshold(pmb, 1000);
+                LLVMPassManagerBuilderUseInlinerWithThreshold(pmb, 120);
                 LLVMPassManagerBuilderPopulateModulePassManager(pmb, pm);
 
                 LLVMPassManagerBuilderDispose(pmb);
