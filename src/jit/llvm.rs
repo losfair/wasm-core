@@ -5,7 +5,7 @@ use llvm_sys::execution_engine::*;
 use llvm_sys::target::*;
 use llvm_sys::analysis::*;
 use llvm_sys::transforms::pass_manager_builder::*;
-use llvm_sys::LLVMIntPredicate;
+use llvm_sys::{LLVMIntPredicate, LLVMRealPredicate};
 use std::rc::Rc;
 use std::cell::Cell;
 use std::ffi::{CStr, CString};
@@ -13,6 +13,7 @@ use std::os::raw::{c_char, c_void};
 
 pub use llvm_sys::LLVMOpcode;
 pub use llvm_sys::LLVMIntPredicate::*;
+pub use llvm_sys::LLVMRealPredicate::*;
 pub use llvm_sys::prelude::LLVMValueRef;
 
 fn empty_cstr() -> *const c_char {
@@ -302,7 +303,7 @@ impl Type {
     pub fn float64(ctx: &Context) -> Type {
         Type {
             _context: ctx.clone(),
-            _ref: unsafe { LLVMFloatTypeInContext(ctx.inner._ref) }
+            _ref: unsafe { LLVMDoubleTypeInContext(ctx.inner._ref) }
         }
     }
 
@@ -570,6 +571,21 @@ impl<'a> Builder<'a> {
         )
     }
 
+    pub unsafe fn build_fcmp(
+        &self,
+        op: LLVMRealPredicate,
+        lhs: LLVMValueRef,
+        rhs: LLVMValueRef
+    ) -> LLVMValueRef {
+        LLVMBuildFCmp(
+            self._ref,
+            op,
+            lhs,
+            rhs,
+            empty_cstr()
+        )
+    }
+
     pub unsafe fn build_ret(&self, v: LLVMValueRef) -> LLVMValueRef {
         LLVMBuildRet(
             self._ref,
@@ -749,6 +765,84 @@ impl<'a> Builder<'a> {
         rhs: LLVMValueRef
     ) -> LLVMValueRef {
         LLVMBuildSRem(
+            self._ref,
+            lhs,
+            rhs,
+            empty_cstr()
+        )
+    }
+
+    pub unsafe fn build_fp_trunc(
+        &self,
+        v: LLVMValueRef,
+        dest_ty: Type
+    ) -> LLVMValueRef {
+        LLVMBuildFPTrunc(
+            self._ref,
+            v,
+            dest_ty._ref,
+            empty_cstr()
+        )
+    }
+
+    pub unsafe fn build_fp_ext(
+        &self,
+        v: LLVMValueRef,
+        dest_ty: Type
+    ) -> LLVMValueRef {
+        LLVMBuildFPExt(
+            self._ref,
+            v,
+            dest_ty._ref,
+            empty_cstr()
+        )
+    }
+
+    pub unsafe fn build_fadd(
+        &self,
+        lhs: LLVMValueRef,
+        rhs: LLVMValueRef
+    ) -> LLVMValueRef {
+        LLVMBuildFAdd(
+            self._ref,
+            lhs,
+            rhs,
+            empty_cstr()
+        )
+    }
+
+    pub unsafe fn build_fsub(
+        &self,
+        lhs: LLVMValueRef,
+        rhs: LLVMValueRef
+    ) -> LLVMValueRef {
+        LLVMBuildFSub(
+            self._ref,
+            lhs,
+            rhs,
+            empty_cstr()
+        )
+    }
+
+    pub unsafe fn build_fmul(
+        &self,
+        lhs: LLVMValueRef,
+        rhs: LLVMValueRef
+    ) -> LLVMValueRef {
+        LLVMBuildFMul(
+            self._ref,
+            lhs,
+            rhs,
+            empty_cstr()
+        )
+    }
+
+    pub unsafe fn build_fdiv(
+        &self,
+        lhs: LLVMValueRef,
+        rhs: LLVMValueRef
+    ) -> LLVMValueRef {
+        LLVMBuildFDiv(
             self._ref,
             lhs,
             rhs,

@@ -1115,12 +1115,12 @@ impl<'a> VirtualMachine<'a> {
                     }
                 },
                 Opcode::F32Const(v) => {
-                    frame.push_operand(Value::F32(fp_ops::i32_reinterpret_f32(v as i32)));
+                    frame.push_operand(Value::F32(fp_ops::f32_reinterpret_i32(v as i32)));
                 },
                 Opcode::F64Const(v) => {
-                    frame.push_operand(Value::F64(fp_ops::i64_reinterpret_f64(v as i64)));
+                    frame.push_operand(Value::F64(fp_ops::f64_reinterpret_i64(v as i64)));
                 },
-                //_ => return Err(ExecuteError::NotImplemented)
+                _ => return Err(ExecuteError::NotImplemented)
             }
         }
     }

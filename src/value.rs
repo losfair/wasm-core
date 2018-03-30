@@ -45,8 +45,8 @@ impl Value {
             Value::Undef => 0,
             Value::I32(v) => v as i64,
             Value::I64(v) => v,
-            Value::F32(v) => fp_ops::f32_convert_i64_s(v).unwrap_or(0),
-            Value::F64(v) => fp_ops::f64_convert_i64_s(v).unwrap_or(0)
+            Value::F32(v) => v as i64,
+            Value::F64(v) => v as i64
         }
     }
 

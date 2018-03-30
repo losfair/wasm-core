@@ -9,6 +9,24 @@ pub struct CompilerIntrinsics {
     pub(super) ctz_i32: llvm::Function,
     pub(super) ctz_i64: llvm::Function,
     pub(super) rotl_i32: llvm::Function,
+    pub(super) fabs_f32: llvm::Function,
+    pub(super) fabs_f64: llvm::Function,
+    pub(super) ceil_f32: llvm::Function,
+    pub(super) ceil_f64: llvm::Function,
+    pub(super) floor_f32: llvm::Function,
+    pub(super) floor_f64: llvm::Function,
+    pub(super) nearest_f32: llvm::Function,
+    pub(super) nearest_f64: llvm::Function,
+    pub(super) sqrt_f32: llvm::Function,
+    pub(super) sqrt_f64: llvm::Function,
+    pub(super) trunc_f32: llvm::Function,
+    pub(super) trunc_f64: llvm::Function,
+    pub(super) copysign_f32: llvm::Function,
+    pub(super) copysign_f64: llvm::Function,
+    pub(super) minnum_f32: llvm::Function,
+    pub(super) minnum_f64: llvm::Function,
+    pub(super) maxnum_f32: llvm::Function,
+    pub(super) maxnum_f64: llvm::Function,
     pub(super) checked_unreachable: llvm::Function,
     pub(super) check_stack: llvm::Function,
     pub(super) select: llvm::Function,
@@ -96,6 +114,228 @@ impl CompilerIntrinsics {
                     &[
                         llvm::Type::int64(ctx),
                         llvm::Type::int1(ctx)
+                    ]
+                )
+            ),
+            fabs_f32: llvm::Function::new(
+                ctx,
+                m,
+                "llvm.fabs.f32",
+                llvm::Type::function(
+                    ctx,
+                    llvm::Type::float32(ctx),
+                    &[
+                        llvm::Type::float32(ctx)
+                    ]
+                )
+            ),
+            fabs_f64: llvm::Function::new(
+                ctx,
+                m,
+                "llvm.fabs.f64",
+                llvm::Type::function(
+                    ctx,
+                    llvm::Type::float64(ctx),
+                    &[
+                        llvm::Type::float64(ctx)
+                    ]
+                )
+            ),
+            ceil_f32: llvm::Function::new(
+                ctx,
+                m,
+                "llvm.ceil.f32",
+                llvm::Type::function(
+                    ctx,
+                    llvm::Type::float32(ctx),
+                    &[
+                        llvm::Type::float32(ctx)
+                    ]
+                )
+            ),
+            ceil_f64: llvm::Function::new(
+                ctx,
+                m,
+                "llvm.ceil.f64",
+                llvm::Type::function(
+                    ctx,
+                    llvm::Type::float64(ctx),
+                    &[
+                        llvm::Type::float64(ctx)
+                    ]
+                )
+            ),
+            floor_f32: llvm::Function::new(
+                ctx,
+                m,
+                "llvm.floor.f32",
+                llvm::Type::function(
+                    ctx,
+                    llvm::Type::float32(ctx),
+                    &[
+                        llvm::Type::float32(ctx)
+                    ]
+                )
+            ),
+            floor_f64: llvm::Function::new(
+                ctx,
+                m,
+                "llvm.floor.f64",
+                llvm::Type::function(
+                    ctx,
+                    llvm::Type::float64(ctx),
+                    &[
+                        llvm::Type::float64(ctx)
+                    ]
+                )
+            ),
+            nearest_f32: llvm::Function::new(
+                ctx,
+                m,
+                "llvm.round.f32",
+                llvm::Type::function(
+                    ctx,
+                    llvm::Type::float32(ctx),
+                    &[
+                        llvm::Type::float32(ctx)
+                    ]
+                )
+            ),
+            nearest_f64: llvm::Function::new(
+                ctx,
+                m,
+                "llvm.round.f64",
+                llvm::Type::function(
+                    ctx,
+                    llvm::Type::float64(ctx),
+                    &[
+                        llvm::Type::float64(ctx)
+                    ]
+                )
+            ),
+            sqrt_f32: llvm::Function::new(
+                ctx,
+                m,
+                "llvm.sqrt.f32",
+                llvm::Type::function(
+                    ctx,
+                    llvm::Type::float32(ctx),
+                    &[
+                        llvm::Type::float32(ctx)
+                    ]
+                )
+            ),
+            sqrt_f64: llvm::Function::new(
+                ctx,
+                m,
+                "llvm.sqrt.f64",
+                llvm::Type::function(
+                    ctx,
+                    llvm::Type::float64(ctx),
+                    &[
+                        llvm::Type::float64(ctx)
+                    ]
+                )
+            ),
+            trunc_f32: llvm::Function::new(
+                ctx,
+                m,
+                "llvm.trunc.f32",
+                llvm::Type::function(
+                    ctx,
+                    llvm::Type::float32(ctx),
+                    &[
+                        llvm::Type::float32(ctx)
+                    ]
+                )
+            ),
+            trunc_f64: llvm::Function::new(
+                ctx,
+                m,
+                "llvm.trunc.f64",
+                llvm::Type::function(
+                    ctx,
+                    llvm::Type::float64(ctx),
+                    &[
+                        llvm::Type::float64(ctx)
+                    ]
+                )
+            ),
+            copysign_f32: llvm::Function::new(
+                ctx,
+                m,
+                "llvm.copysign.f32",
+                llvm::Type::function(
+                    ctx,
+                    llvm::Type::float32(ctx),
+                    &[
+                        llvm::Type::float32(ctx),
+                        llvm::Type::float32(ctx)
+                    ]
+                )
+            ),
+            copysign_f64: llvm::Function::new(
+                ctx,
+                m,
+                "llvm.copysign.f64",
+                llvm::Type::function(
+                    ctx,
+                    llvm::Type::float64(ctx),
+                    &[
+                        llvm::Type::float64(ctx),
+                        llvm::Type::float64(ctx)
+                    ]
+                )
+            ),
+            minnum_f32: llvm::Function::new(
+                ctx,
+                m,
+                "llvm.minnum.f32",
+                llvm::Type::function(
+                    ctx,
+                    llvm::Type::float32(ctx),
+                    &[
+                        llvm::Type::float32(ctx),
+                        llvm::Type::float32(ctx)
+                    ]
+                )
+            ),
+            minnum_f64: llvm::Function::new(
+                ctx,
+                m,
+                "llvm.minnum.f64",
+                llvm::Type::function(
+                    ctx,
+                    llvm::Type::float64(ctx),
+                    &[
+                        llvm::Type::float64(ctx),
+                        llvm::Type::float64(ctx)
+                    ]
+                )
+            ),
+            maxnum_f32: llvm::Function::new(
+                ctx,
+                m,
+                "llvm.maxnum.f32",
+                llvm::Type::function(
+                    ctx,
+                    llvm::Type::float32(ctx),
+                    &[
+                        llvm::Type::float32(ctx),
+                        llvm::Type::float32(ctx)
+                    ]
+                )
+            ),
+            maxnum_f64: llvm::Function::new(
+                ctx,
+                m,
+                "llvm.maxnum.f64",
+                llvm::Type::function(
+                    ctx,
+                    llvm::Type::float64(ctx),
+                    &[
+                        llvm::Type::float64(ctx),
+                        llvm::Type::float64(ctx)
                     ]
                 )
             ),

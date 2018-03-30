@@ -426,6 +426,46 @@ impl<'a> Compiler<'a> {
             }
         };
 
+        let build_stack_push_f32 = |builder: &llvm::Builder, v: llvm::LLVMValueRef| {
+            unsafe {
+                build_stack_push_i32(
+                    builder,
+                    builder.build_bitcast(
+                        v,
+                        llvm::Type::int32(ctx)
+                    )
+                )
+            }
+        };
+        let build_stack_pop_f32 = |builder: &llvm::Builder| -> llvm::LLVMValueRef {
+            unsafe {
+                builder.build_bitcast(
+                    build_stack_pop_i32(builder),
+                    llvm::Type::float32(ctx)
+                )
+            }
+        };
+
+        let build_stack_push_f64 = |builder: &llvm::Builder, v: llvm::LLVMValueRef| {
+            unsafe {
+                build_stack_push(
+                    builder,
+                    builder.build_bitcast(
+                        v,
+                        llvm::Type::int64(ctx)
+                    )
+                )
+            }
+        };
+        let build_stack_pop_f64 = |builder: &llvm::Builder| -> llvm::LLVMValueRef {
+            unsafe {
+                builder.build_bitcast(
+                    build_stack_pop(builder),
+                    llvm::Type::float64(ctx)
+                )
+            }
+        };
+
         let build_get_local = |builder: &llvm::Builder, id: usize| -> llvm::LLVMValueRef {
             if id >= n_locals {
                 panic!("Local index out of bound");
@@ -564,6 +604,96 @@ impl<'a> Compiler<'a> {
             unsafe {
                 let b = build_stack_pop(&builder);
                 let a = build_stack_pop(&builder);
+                build_stack_push(
+                    &builder,
+                    builder.build_cast(
+                        llvm::LLVMOpcode::LLVMZExt,
+                        op(builder, a, b),
+                        llvm::Type::int64(ctx)
+                    )
+                );
+            }
+        };
+
+        let build_f32_unop = |
+            builder: &llvm::Builder,
+            op: &Fn(&llvm::Builder, llvm::LLVMValueRef) -> llvm::LLVMValueRef
+        | {
+            unsafe {
+                let v = build_stack_pop_f32(&builder);
+                build_stack_push_f32(
+                    &builder,
+                    op(builder, v)
+                );
+            }
+        };
+
+        let build_f32_binop = |
+            builder: &llvm::Builder,
+            op: &Fn(&llvm::Builder, llvm::LLVMValueRef, llvm::LLVMValueRef) -> llvm::LLVMValueRef
+        | {
+            unsafe {
+                let b = build_stack_pop_f32(&builder);
+                let a = build_stack_pop_f32(&builder);
+                build_stack_push_f32(
+                    &builder,
+                    op(builder, a, b)
+                );
+            }
+        };
+
+        let build_f32_relop = |
+            builder: &llvm::Builder,
+            op: &Fn(&llvm::Builder, llvm::LLVMValueRef, llvm::LLVMValueRef) -> llvm::LLVMValueRef
+        | {
+            unsafe {
+                let b = build_stack_pop_f32(&builder);
+                let a = build_stack_pop_f32(&builder);
+                build_stack_push(
+                    &builder,
+                    builder.build_cast(
+                        llvm::LLVMOpcode::LLVMZExt,
+                        op(builder, a, b),
+                        llvm::Type::int64(ctx)
+                    )
+                );
+            }
+        };
+
+        let build_f64_unop = |
+            builder: &llvm::Builder,
+            op: &Fn(&llvm::Builder, llvm::LLVMValueRef) -> llvm::LLVMValueRef
+        | {
+            unsafe {
+                let v = build_stack_pop_f64(&builder);
+                build_stack_push_f64(
+                    &builder,
+                    op(builder, v)
+                );
+            }
+        };
+
+        let build_f64_binop = |
+            builder: &llvm::Builder,
+            op: &Fn(&llvm::Builder, llvm::LLVMValueRef, llvm::LLVMValueRef) -> llvm::LLVMValueRef
+        | {
+            unsafe {
+                let b = build_stack_pop_f64(&builder);
+                let a = build_stack_pop_f64(&builder);
+                build_stack_push_f64(
+                    &builder,
+                    op(builder, a, b)
+                );
+            }
+        };
+
+        let build_f64_relop = |
+            builder: &llvm::Builder,
+            op: &Fn(&llvm::Builder, llvm::LLVMValueRef, llvm::LLVMValueRef) -> llvm::LLVMValueRef
+        | {
+            unsafe {
+                let b = build_stack_pop_f64(&builder);
+                let a = build_stack_pop_f64(&builder);
                 build_stack_push(
                     &builder,
                     builder.build_cast(
@@ -2015,6 +2145,556 @@ impl<'a> Compiler<'a> {
                                 )
                             );
                         },
+                        Opcode::I32ReinterpretF32 | Opcode::I64ReinterpretF64
+                            | Opcode::F32ReinterpretI32 | Opcode::F64ReinterpretI64 => {
+                                // no-op
+                        },
+                        Opcode::I32TruncSF32 => {
+                            let builder = target_bb.builder();
+                            build_stack_push_i32(
+                                &builder,
+                                builder.build_cast(
+                                    llvm::LLVMOpcode::LLVMFPToSI,
+                                    build_stack_pop_f32(&builder),
+                                    llvm::Type::int32(ctx)
+                                )
+                            );
+                        },
+                        Opcode::I32TruncUF32 => {
+                            let builder = target_bb.builder();
+                            build_stack_push_i32(
+                                &builder,
+                                builder.build_cast(
+                                    llvm::LLVMOpcode::LLVMFPToUI,
+                                    build_stack_pop_f32(&builder),
+                                    llvm::Type::int32(ctx)
+                                )
+                            );
+                        },
+                        Opcode::I32TruncSF64 => {
+                            let builder = target_bb.builder();
+                            build_stack_push_i32(
+                                &builder,
+                                builder.build_cast(
+                                    llvm::LLVMOpcode::LLVMFPToSI,
+                                    build_stack_pop_f64(&builder),
+                                    llvm::Type::int32(ctx)
+                                )
+                            );
+                        },
+                        Opcode::I32TruncUF64 => {
+                            let builder = target_bb.builder();
+                            build_stack_push_i32(
+                                &builder,
+                                builder.build_cast(
+                                    llvm::LLVMOpcode::LLVMFPToUI,
+                                    build_stack_pop_f64(&builder),
+                                    llvm::Type::int32(ctx)
+                                )
+                            );
+                        },
+                        Opcode::I64TruncSF32 => {
+                            let builder = target_bb.builder();
+                            build_stack_push(
+                                &builder,
+                                builder.build_cast(
+                                    llvm::LLVMOpcode::LLVMFPToSI,
+                                    build_stack_pop_f32(&builder),
+                                    llvm::Type::int64(ctx)
+                                )
+                            );
+                        },
+                        Opcode::I64TruncUF32 => {
+                            let builder = target_bb.builder();
+                            build_stack_push(
+                                &builder,
+                                builder.build_cast(
+                                    llvm::LLVMOpcode::LLVMFPToUI,
+                                    build_stack_pop_f32(&builder),
+                                    llvm::Type::int64(ctx)
+                                )
+                            );
+                        },
+                        Opcode::I64TruncSF64 => {
+                            let builder = target_bb.builder();
+                            build_stack_push(
+                                &builder,
+                                builder.build_cast(
+                                    llvm::LLVMOpcode::LLVMFPToSI,
+                                    build_stack_pop_f64(&builder),
+                                    llvm::Type::int64(ctx)
+                                )
+                            );
+                        },
+                        Opcode::I64TruncUF64 => {
+                            let builder = target_bb.builder();
+                            build_stack_push(
+                                &builder,
+                                builder.build_cast(
+                                    llvm::LLVMOpcode::LLVMFPToUI,
+                                    build_stack_pop_f64(&builder),
+                                    llvm::Type::int64(ctx)
+                                )
+                            );
+                        },
+                        Opcode::F32ConvertSI32 => {
+                            let builder = target_bb.builder();
+                            build_stack_push_f32(
+                                &builder,
+                                builder.build_cast(
+                                    llvm::LLVMOpcode::LLVMSIToFP,
+                                    build_stack_pop_i32(&builder),
+                                    llvm::Type::float32(ctx)
+                                )
+                            );
+                        },
+                        Opcode::F32ConvertUI32 => {
+                            let builder = target_bb.builder();
+                            build_stack_push_f32(
+                                &builder,
+                                builder.build_cast(
+                                    llvm::LLVMOpcode::LLVMUIToFP,
+                                    build_stack_pop_i32(&builder),
+                                    llvm::Type::float32(ctx)
+                                )
+                            );
+                        },
+                        Opcode::F32ConvertSI64 => {
+                            let builder = target_bb.builder();
+                            build_stack_push_f32(
+                                &builder,
+                                builder.build_cast(
+                                    llvm::LLVMOpcode::LLVMSIToFP,
+                                    build_stack_pop(&builder),
+                                    llvm::Type::float32(ctx)
+                                )
+                            );
+                        },
+                        Opcode::F32ConvertUI64 => {
+                            let builder = target_bb.builder();
+                            build_stack_push_f32(
+                                &builder,
+                                builder.build_cast(
+                                    llvm::LLVMOpcode::LLVMSIToFP,
+                                    build_stack_pop(&builder),
+                                    llvm::Type::float32(ctx)
+                                )
+                            );
+                        },
+                        Opcode::F64ConvertSI32 => {
+                            let builder = target_bb.builder();
+                            build_stack_push_f64(
+                                &builder,
+                                builder.build_cast(
+                                    llvm::LLVMOpcode::LLVMSIToFP,
+                                    build_stack_pop_i32(&builder),
+                                    llvm::Type::float64(ctx)
+                                )
+                            );
+                        },
+                        Opcode::F64ConvertUI32 => {
+                            let builder = target_bb.builder();
+                            build_stack_push_f64(
+                                &builder,
+                                builder.build_cast(
+                                    llvm::LLVMOpcode::LLVMUIToFP,
+                                    build_stack_pop_i32(&builder),
+                                    llvm::Type::float64(ctx)
+                                )
+                            );
+                        },
+                        Opcode::F64ConvertSI64 => {
+                            let builder = target_bb.builder();
+                            build_stack_push_f64(
+                                &builder,
+                                builder.build_cast(
+                                    llvm::LLVMOpcode::LLVMSIToFP,
+                                    build_stack_pop(&builder),
+                                    llvm::Type::float64(ctx)
+                                )
+                            );
+                        },
+                        Opcode::F64ConvertUI64 => {
+                            let builder = target_bb.builder();
+                            build_stack_push_f64(
+                                &builder,
+                                builder.build_cast(
+                                    llvm::LLVMOpcode::LLVMSIToFP,
+                                    build_stack_pop(&builder),
+                                    llvm::Type::float64(ctx)
+                                )
+                            );
+                        },
+                        Opcode::F32DemoteF64 => {
+                            let builder = target_bb.builder();
+                            build_stack_push_f32(
+                                &builder,
+                                builder.build_fp_trunc(
+                                    build_stack_pop_f64(&builder),
+                                    llvm::Type::float32(ctx)
+                                )
+                            );
+                        },
+                        Opcode::F64PromoteF32 => {
+                            let builder = target_bb.builder();
+                            build_stack_push_f64(
+                                &builder,
+                                builder.build_fp_ext(
+                                    build_stack_pop_f32(&builder),
+                                    llvm::Type::float64(ctx)
+                                )
+                            );
+                        },
+                        Opcode::F32Abs => {
+                            build_f32_unop(
+                                &target_bb.builder(),
+                                &|t, v| t.build_call(
+                                    &intrinsics.fabs_f32,
+                                    &[ v ]
+                                )
+                            )
+                        },
+                        Opcode::F32Neg => {
+                            build_f32_unop(
+                                &target_bb.builder(),
+                                &|t, v| t.build_fsub(
+                                    t.build_bitcast(
+                                        t.build_const_int(
+                                            llvm::Type::int32(ctx),
+                                            0,
+                                            false
+                                        ),
+                                        llvm::Type::float32(ctx)
+                                    ),
+                                    v
+                                )
+                            );
+                        },
+                        Opcode::F32Ceil => {
+                            build_f32_unop(
+                                &target_bb.builder(),
+                                &|t, v| t.build_call(
+                                    &intrinsics.ceil_f32,
+                                    &[ v ]
+                                )
+                            );
+                        },
+                        Opcode::F32Floor => {
+                            build_f32_unop(
+                                &target_bb.builder(),
+                                &|t, v| t.build_call(
+                                    &intrinsics.floor_f32,
+                                    &[ v ]
+                                )
+                            );
+                        },
+                        Opcode::F32Trunc => {
+                            build_f32_unop(
+                                &target_bb.builder(),
+                                &|t, v| t.build_call(
+                                    &intrinsics.trunc_f32,
+                                    &[ v ]
+                                )
+                            );
+                        },
+                        Opcode::F32Nearest => {
+                            build_f32_unop(
+                                &target_bb.builder(),
+                                &|t, v| t.build_call(
+                                    &intrinsics.nearest_f32,
+                                    &[ v ]
+                                )
+                            );
+                        },
+                        Opcode::F32Sqrt => {
+                            build_f32_unop(
+                                &target_bb.builder(),
+                                &|t, v| t.build_call(
+                                    &intrinsics.sqrt_f32,
+                                    &[ v ]
+                                )
+                            );
+                        },
+                        Opcode::F32Add => {
+                            build_f32_binop(
+                                &target_bb.builder(),
+                                &|t, a, b| t.build_fadd(a, b)
+                            );
+                        },
+                        Opcode::F32Sub => {
+                            build_f32_binop(
+                                &target_bb.builder(),
+                                &|t, a, b| t.build_fsub(a, b)
+                            );
+                        },
+                        Opcode::F32Mul => {
+                            build_f32_binop(
+                                &target_bb.builder(),
+                                &|t, a, b| t.build_fmul(a, b)
+                            );
+                        },
+                        Opcode::F32Div => {
+                            build_f32_binop(
+                                &target_bb.builder(),
+                                &|t, a, b| t.build_fdiv(a, b)
+                            );
+                        },
+                        Opcode::F32Min => {
+                            build_f32_binop(
+                                &target_bb.builder(),
+                                &|t, a, b| t.build_call(
+                                    &intrinsics.minnum_f32,
+                                    &[ a, b ]
+                                )
+                            );
+                        },
+                        Opcode::F32Max => {
+                            build_f32_binop(
+                                &target_bb.builder(),
+                                &|t, a, b| t.build_call(
+                                    &intrinsics.maxnum_f32,
+                                    &[ a, b ]
+                                )
+                            );
+                        },
+                        Opcode::F32Copysign => {
+                            build_f32_binop(
+                                &target_bb.builder(),
+                                &|t, a, b| t.build_call(
+                                    &intrinsics.copysign_f32,
+                                    &[ a, b ]
+                                )
+                            );
+                        },
+                        Opcode::F32Eq => {
+                            build_f32_relop(
+                                &target_bb.builder(),
+                                &|t, a, b| t.build_fcmp(
+                                    llvm::LLVMRealOEQ,
+                                    a, b
+                                )
+                            );
+                        },
+                        Opcode::F32Ne => {
+                            build_f32_relop(
+                                &target_bb.builder(),
+                                &|t, a, b| t.build_fcmp(
+                                    llvm::LLVMRealONE,
+                                    a, b
+                                )
+                            );
+                        },
+                        Opcode::F32Lt => {
+                            build_f32_relop(
+                                &target_bb.builder(),
+                                &|t, a, b| t.build_fcmp(
+                                    llvm::LLVMRealOLT,
+                                    a, b
+                                )
+                            );
+                        },
+                        Opcode::F32Gt => {
+                            build_f32_relop(
+                                &target_bb.builder(),
+                                &|t, a, b| t.build_fcmp(
+                                    llvm::LLVMRealOGT,
+                                    a, b
+                                )
+                            );
+                        },
+                        Opcode::F32Le => {
+                            build_f32_relop(
+                                &target_bb.builder(),
+                                &|t, a, b| t.build_fcmp(
+                                    llvm::LLVMRealOLE,
+                                    a, b
+                                )
+                            );
+                        },
+                        Opcode::F32Ge => {
+                            build_f32_relop(
+                                &target_bb.builder(),
+                                &|t, a, b| t.build_fcmp(
+                                    llvm::LLVMRealOGE,
+                                    a, b
+                                )
+                            );
+                        },
+                        Opcode::F64Abs => {
+                            build_f64_unop(
+                                &target_bb.builder(),
+                                &|t, v| t.build_call(
+                                    &intrinsics.fabs_f64,
+                                    &[ v ]
+                                )
+                            )
+                        },
+                        Opcode::F64Neg => {
+                            build_f64_unop(
+                                &target_bb.builder(),
+                                &|t, v| t.build_fsub(
+                                    t.build_bitcast(
+                                        t.build_const_int(
+                                            llvm::Type::int64(ctx),
+                                            0,
+                                            false
+                                        ),
+                                        llvm::Type::float64(ctx)
+                                    ),
+                                    v
+                                )
+                            );
+                        },
+                        Opcode::F64Ceil => {
+                            build_f64_unop(
+                                &target_bb.builder(),
+                                &|t, v| t.build_call(
+                                    &intrinsics.ceil_f64,
+                                    &[ v ]
+                                )
+                            );
+                        },
+                        Opcode::F64Floor => {
+                            build_f64_unop(
+                                &target_bb.builder(),
+                                &|t, v| t.build_call(
+                                    &intrinsics.floor_f64,
+                                    &[ v ]
+                                )
+                            );
+                        },
+                        Opcode::F64Trunc => {
+                            build_f64_unop(
+                                &target_bb.builder(),
+                                &|t, v| t.build_call(
+                                    &intrinsics.trunc_f64,
+                                    &[ v ]
+                                )
+                            );
+                        },
+                        Opcode::F64Nearest => {
+                            build_f64_unop(
+                                &target_bb.builder(),
+                                &|t, v| t.build_call(
+                                    &intrinsics.nearest_f64,
+                                    &[ v ]
+                                )
+                            );
+                        },
+                        Opcode::F64Sqrt => {
+                            build_f64_unop(
+                                &target_bb.builder(),
+                                &|t, v| t.build_call(
+                                    &intrinsics.sqrt_f64,
+                                    &[ v ]
+                                )
+                            );
+                        },
+                        Opcode::F64Add => {
+                            build_f64_binop(
+                                &target_bb.builder(),
+                                &|t, a, b| t.build_fadd(a, b)
+                            );
+                        },
+                        Opcode::F64Sub => {
+                            build_f64_binop(
+                                &target_bb.builder(),
+                                &|t, a, b| t.build_fsub(a, b)
+                            );
+                        },
+                        Opcode::F64Mul => {
+                            build_f64_binop(
+                                &target_bb.builder(),
+                                &|t, a, b| t.build_fmul(a, b)
+                            );
+                        },
+                        Opcode::F64Div => {
+                            build_f64_binop(
+                                &target_bb.builder(),
+                                &|t, a, b| t.build_fdiv(a, b)
+                            );
+                        },
+                        Opcode::F64Min => {
+                            build_f64_binop(
+                                &target_bb.builder(),
+                                &|t, a, b| t.build_call(
+                                    &intrinsics.minnum_f64,
+                                    &[ a, b ]
+                                )
+                            );
+                        },
+                        Opcode::F64Max => {
+                            build_f64_binop(
+                                &target_bb.builder(),
+                                &|t, a, b| t.build_call(
+                                    &intrinsics.maxnum_f64,
+                                    &[ a, b ]
+                                )
+                            );
+                        },
+                        Opcode::F64Copysign => {
+                            build_f64_binop(
+                                &target_bb.builder(),
+                                &|t, a, b| t.build_call(
+                                    &intrinsics.copysign_f64,
+                                    &[ a, b ]
+                                )
+                            );
+                        },
+                        Opcode::F64Eq => {
+                            build_f64_relop(
+                                &target_bb.builder(),
+                                &|t, a, b| t.build_fcmp(
+                                    llvm::LLVMRealOEQ,
+                                    a, b
+                                )
+                            );
+                        },
+                        Opcode::F64Ne => {
+                            build_f64_relop(
+                                &target_bb.builder(),
+                                &|t, a, b| t.build_fcmp(
+                                    llvm::LLVMRealONE,
+                                    a, b
+                                )
+                            );
+                        },
+                        Opcode::F64Lt => {
+                            build_f64_relop(
+                                &target_bb.builder(),
+                                &|t, a, b| t.build_fcmp(
+                                    llvm::LLVMRealOLT,
+                                    a, b
+                                )
+                            );
+                        },
+                        Opcode::F64Gt => {
+                            build_f64_relop(
+                                &target_bb.builder(),
+                                &|t, a, b| t.build_fcmp(
+                                    llvm::LLVMRealOGT,
+                                    a, b
+                                )
+                            );
+                        },
+                        Opcode::F64Le => {
+                            build_f64_relop(
+                                &target_bb.builder(),
+                                &|t, a, b| t.build_fcmp(
+                                    llvm::LLVMRealOLE,
+                                    a, b
+                                )
+                            );
+                        },
+                        Opcode::F64Ge => {
+                            build_f64_relop(
+                                &target_bb.builder(),
+                                &|t, a, b| t.build_fcmp(
+                                    llvm::LLVMRealOGE,
+                                    a, b
+                                )
+                            );
+                        },
                         Opcode::Memcpy | Opcode::NotImplemented(_)
                             | Opcode::I32Rotr
                             | Opcode::I64Rotl | Opcode::I64Rotr => {
@@ -2678,6 +3358,89 @@ mod tests {
         assert_eq!(f(2), 30);
         assert_eq!(f(3), 30);
         assert_eq!(f(4), 29);
+    }
+
+    #[test]
+    fn test_f32_add() {
+        let ee = build_ee_from_fn_body(
+            Type::Func(vec! [ ValType::F32, ValType::F32 ], vec! [ ValType::F32 ]),
+            vec! [],
+            vec! [
+                Opcode::GetLocal(0),
+                Opcode::GetLocal(1),
+                Opcode::F32Add,
+                Opcode::Return
+            ]
+        );
+
+        //println!("{}", ee.to_string());
+
+        let f: extern "C" fn (a: i64, b: i64) -> i64 = unsafe {
+            ::std::mem::transmute(ee.get_function_address(0))
+        };
+        unsafe {
+            assert_eq!(
+                f(
+                    ::std::mem::transmute::<f32, u32>(1.2) as i64,
+                    ::std::mem::transmute::<f32, u32>(1.5) as i64
+                ),
+                ::std::mem::transmute::<f32, u32>(1.2 as f32 + 1.5 as f32) as i64
+            )
+        };
+    }
+
+    #[test]
+    fn test_f32_neg() {
+        let ee = build_ee_from_fn_body(
+            Type::Func(vec! [ ValType::F32 ], vec! [ ValType::F32 ]),
+            vec! [],
+            vec! [
+                Opcode::GetLocal(0),
+                Opcode::F32Neg,
+                Opcode::Return
+            ]
+        );
+
+        //println!("{}", ee.to_string());
+
+        let f: extern "C" fn (v: i64) -> i64 = unsafe {
+            ::std::mem::transmute(ee.get_function_address(0))
+        };
+        unsafe {
+            assert_eq!(
+                f(
+                    ::std::mem::transmute::<f32, u32>(1.2) as i64
+                ),
+                ::std::mem::transmute::<f32, u32>(-1.2 as f32) as i64
+            )
+        };
+    }
+
+    #[test]
+    fn test_f32_sqrt() {
+        let ee = build_ee_from_fn_body(
+            Type::Func(vec! [ ValType::F32 ], vec! [ ValType::F32 ]),
+            vec! [],
+            vec! [
+                Opcode::GetLocal(0),
+                Opcode::F32Sqrt,
+                Opcode::Return
+            ]
+        );
+
+        //println!("{}", ee.to_string());
+
+        let f: extern "C" fn (v: i64) -> i64 = unsafe {
+            ::std::mem::transmute(ee.get_function_address(0))
+        };
+        unsafe {
+            assert_eq!(
+                f(
+                    ::std::mem::transmute::<f32, u32>(1.2) as i64
+                ),
+                ::std::mem::transmute::<f32, u32>((1.2 as f32).sqrt()) as i64
+            )
+        };
     }
 
     #[test]
