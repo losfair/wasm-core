@@ -26,6 +26,7 @@ struct CompilerIntrinsics {
     clz_i64: llvm::Function,
     ctz_i32: llvm::Function,
     ctz_i64: llvm::Function,
+    rotl_i32: llvm::Function,
     checked_unreachable: llvm::Function,
     check_stack: llvm::Function,
     select: llvm::Function,
@@ -115,6 +116,7 @@ impl CompilerIntrinsics {
                     ]
                 )
             ),
+            rotl_i32: Self::build_rotl_i32(ctx, m),
             checked_unreachable: Self::build_checked_unreachable(ctx, m),
             check_stack: Self::build_check_stack(ctx, m),
             select: Self::build_select(ctx, m),
@@ -141,7 +143,8 @@ impl CompilerIntrinsics {
     extern "C" fn do_enforce_indirect_fn_typeck(rt: &Runtime, expected_typeidx: usize, indirect_index: usize) {
         let ty1 = &rt.source_module.types[expected_typeidx];
 
-        let got_typeidx = rt.source_module.tables[0].elements[indirect_index].unwrap() as usize;
+        let got_fn = rt.source_module.tables[0].elements[indirect_index].unwrap() as usize;
+        let got_typeidx = rt.source_module.functions[got_fn].typeidx as usize;
         let ty2 = &rt.source_module.types[got_typeidx];
 
         if expected_typeidx == got_typeidx {
@@ -151,6 +154,73 @@ impl CompilerIntrinsics {
         if ty1 != ty2 {
             panic!("enforce_typeck: Type mismatch: Expected {:?}, got {:?}", ty1, ty2);
         }
+    }
+
+    fn build_rotl_i32(ctx: &llvm::Context, m: &llvm::Module) -> llvm::Function {
+        let f: llvm::Function = llvm::Function::new(
+            ctx,
+            m,
+            "rotl_i32",
+            llvm::Type::function(
+                ctx,
+                llvm::Type::int32(ctx),
+                &[
+                    llvm::Type::int32(ctx),
+                    llvm::Type::int32(ctx)
+                ]
+            )
+        );
+        let check_bb = llvm::BasicBlock::new(&f);
+        let ret_bb = llvm::BasicBlock::new(&f);
+        let calc_bb = llvm::BasicBlock::new(&f);
+
+        unsafe {
+            let builder = check_bb.builder();
+            let cmp_result = builder.build_icmp(
+                llvm::LLVMIntEQ,
+                f.get_param(1),
+                builder.build_const_int(
+                    llvm::Type::int32(ctx),
+                    0,
+                    false
+                )
+            );
+            builder.build_cond_br(
+                cmp_result,
+                &ret_bb,
+                &calc_bb
+            );
+        }
+
+        unsafe {
+            let builder = ret_bb.builder();
+            builder.build_ret(f.get_param(0));
+        }
+
+        unsafe {
+            let builder = calc_bb.builder();
+            let ret = builder.build_or(
+                builder.build_shl(
+                    f.get_param(0),
+                    f.get_param(1)
+                ),
+                builder.build_lshr(
+                    f.get_param(0),
+                    builder.build_sub(
+                        builder.build_const_int(
+                            llvm::Type::int32(ctx),
+                            32,
+                            false
+                        ),
+                        f.get_param(1)
+                    )
+                )
+            );
+            builder.build_ret(ret);
+        }
+
+        f.verify();
+        f
     }
 
     fn build_checked_unreachable(ctx: &llvm::Context, m: &llvm::Module) -> llvm::Function {
@@ -1915,6 +1985,15 @@ impl<'a> Compiler<'a> {
                                 &|t, a, b| t.build_xor(a, b)
                             );
                         },
+                        Opcode::I32Rotl => {
+                            build_i32_binop(
+                                &target_bb.builder(),
+                                &|t, a, b| t.build_call(
+                                    &intrinsics.rotl_i32,
+                                    &[a, b]
+                                )
+                            );
+                        },
                         Opcode::I32Eqz => {
                             let builder = target_bb.builder();
                             let v = builder.build_icmp(
@@ -2657,7 +2736,7 @@ impl<'a> Compiler<'a> {
                             );
                         },
                         Opcode::Memcpy | Opcode::NotImplemented(_)
-                            | Opcode::I32Rotl | Opcode::I32Rotr
+                            | Opcode::I32Rotr
                             | Opcode::I64Rotl | Opcode::I64Rotr => {
                             // not implemented
                             eprintln!("Warning: Not implemented: {:?}", op);
@@ -3342,6 +3421,29 @@ mod tests {
         assert_eq!(f(4), 1);
     }
 
+    #[test]
+    fn test_i32_rotl() {
+        let ee = build_ee_from_fn_body(
+            Type::Func(vec! [ ValType::I32, ValType::I32 ], vec! [ ValType::I32 ]),
+            vec! [],
+            vec! [
+                Opcode::GetLocal(0),
+                Opcode::GetLocal(1),
+                Opcode::I32Rotl,
+                Opcode::Return
+            ]
+        );
+
+        //println!("{}", ee.to_string());
+
+        let f: extern "C" fn (a: i64, b: i64) -> i64 = unsafe {
+            ::std::mem::transmute(ee.get_function_address(0))
+        };
+        assert_eq!(f(1, 0), 1);
+        assert_eq!(f(1, 1), 2);
+        assert_eq!(f(2, 0), 2);
+        assert_eq!(f(2, 1), 4);
+    }
 
     #[test]
     fn test_current_memory() {
