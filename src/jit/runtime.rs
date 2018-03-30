@@ -1,8 +1,10 @@
 use std::cell::{UnsafeCell, RefCell};
+use std::rc::Rc;
 use std::os::raw::c_void;
 use executor::{NativeResolver, NativeFunction, NativeEntry, NativeFunctionInfo, GlobalStateProvider};
 use module::{Module, Type, ValType};
 use value::Value;
+use super::ondemand::Ondemand;
 
 pub struct Runtime {
     pub(super) opt_level: u32,
@@ -13,6 +15,7 @@ pub struct Runtime {
     globals: Box<[i64]>,
     native_functions: Box<[RefCell<NativeFunctionInfo>]>,
     native_resolver: RefCell<Option<Box<NativeResolver>>>,
+    ondemand: RefCell<Option<Rc<Ondemand>>>,
     jit_info: Box<UnsafeCell<JitInfo>>
 }
 
@@ -92,23 +95,22 @@ impl Runtime {
             globals: globals,
             native_functions: native_functions.into_boxed_slice(),
             native_resolver: RefCell::new(None),
+            ondemand: RefCell::new(None),
             jit_info: Box::new(UnsafeCell::new(jit_info))
         }
     }
 
-    pub fn set_function_addrs(&self, new_addrs: Vec<*const c_void>) {
-        unsafe {
-            let addrs = &mut *self.function_addrs.get();
-            *addrs = Some(new_addrs);
+    pub fn set_ondemand(&self, ondemand: Rc<Ondemand>) {
+        let mut current = self.ondemand.borrow_mut();
+        if current.is_some() {
+            panic!("Attempting to re-set ondemand");
         }
+
+        *current = Some(ondemand);
     }
 
     pub fn get_function_addr(&self, id: usize) -> *const c_void {
-        unsafe {
-            let addrs = &*self.function_addrs.get();
-            let addrs = addrs.as_ref().unwrap();
-            addrs[id]
-        }
+        self.ondemand.borrow().as_ref().unwrap().get_function_addr(id)
     }
 
     pub fn set_native_resolver<R: NativeResolver>(&self, resolver: R) {
