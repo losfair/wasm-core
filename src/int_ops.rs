@@ -348,7 +348,7 @@ pub fn i64_mul(a: i64, b: i64) -> Value {
 
 #[inline]
 pub fn i64_div_u(a: i64, b: i64) -> Value {
-    Value::I64((a as u32).wrapping_div(b as u32) as i64)
+    Value::I64((a as u64).wrapping_div(b as u64) as i64)
 }
 
 #[inline]
@@ -358,7 +358,7 @@ pub fn i64_div_s(a: i64, b: i64) -> Value {
 
 #[inline]
 pub fn i64_rem_u(a: i64, b: i64) -> Value {
-    Value::I64((a as u32).wrapping_rem(b as u32) as i64)
+    Value::I64((a as u64).wrapping_rem(b as u64) as i64)
 }
 
 #[inline]
@@ -435,7 +435,7 @@ pub fn i64_ne(a: i64, b: i64) -> Value {
 
 #[inline]
 pub fn i64_lt_u(a: i64, b: i64) -> Value {
-    if (a as u32) < (b as u32) {
+    if (a as u64) < (b as u64) {
         Value::I32(1)
     } else {
         Value::I32(0)
@@ -453,7 +453,7 @@ pub fn i64_lt_s(a: i64, b: i64) -> Value {
 
 #[inline]
 pub fn i64_le_u(a: i64, b: i64) -> Value {
-    if (a as u32) <= (b as u32) {
+    if (a as u64) <= (b as u64) {
         Value::I32(1)
     } else {
         Value::I32(0)
@@ -471,7 +471,7 @@ pub fn i64_le_s(a: i64, b: i64) -> Value {
 
 #[inline]
 pub fn i64_gt_u(a: i64, b: i64) -> Value {
-    if (a as u32) > (b as u32) {
+    if (a as u64) > (b as u64) {
         Value::I32(1)
     } else {
         Value::I32(0)
@@ -489,7 +489,7 @@ pub fn i64_gt_s(a: i64, b: i64) -> Value {
 
 #[inline]
 pub fn i64_ge_u(a: i64, b: i64) -> Value {
-    if (a as u32) >= (b as u32) {
+    if (a as u64) >= (b as u64) {
         Value::I32(1)
     } else {
         Value::I32(0)
