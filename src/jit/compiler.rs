@@ -1404,6 +1404,15 @@ impl<'a> Compiler<'a> {
                                 )
                             );
                         },
+                        Opcode::I32Rotr => {
+                            build_i32_binop(
+                                &target_bb.builder(),
+                                &|t, a, b| t.build_call(
+                                    &intrinsics.rotr_i32,
+                                    &[a, b]
+                                )
+                            );
+                        },
                         Opcode::I32Eqz => {
                             let builder = target_bb.builder();
                             let v = builder.build_icmp(
@@ -1795,6 +1804,24 @@ impl<'a> Compiler<'a> {
                             build_i64_binop(
                                 &target_bb.builder(),
                                 &|t, a, b| t.build_xor(a, b)
+                            );
+                        },
+                        Opcode::I64Rotl => {
+                            build_i64_binop(
+                                &target_bb.builder(),
+                                &|t, a, b| t.build_call(
+                                    &intrinsics.rotl_i64,
+                                    &[a, b]
+                                )
+                            );
+                        },
+                        Opcode::I64Rotr => {
+                            build_i64_binop(
+                                &target_bb.builder(),
+                                &|t, a, b| t.build_call(
+                                    &intrinsics.rotr_i64,
+                                    &[a, b]
+                                )
                             );
                         },
                         Opcode::I64Eqz => {
@@ -3489,6 +3516,78 @@ mod tests {
         assert_eq!(f(1, 1), 2);
         assert_eq!(f(2, 0), 2);
         assert_eq!(f(2, 1), 4);
+    }
+
+    #[test]
+    fn test_i32_rotr() {
+        let ee = build_ee_from_fn_body(
+            Type::Func(vec! [ ValType::I32, ValType::I32 ], vec! [ ValType::I32 ]),
+            vec! [],
+            vec! [
+                Opcode::GetLocal(0),
+                Opcode::GetLocal(1),
+                Opcode::I32Rotr,
+                Opcode::Return
+            ]
+        );
+
+        //println!("{}", ee.to_string());
+
+        let f: extern "C" fn (a: i64, b: i64) -> i64 = unsafe {
+            ::std::mem::transmute(ee.get_function_address(0))
+        };
+        assert_eq!(f(1, 0), 1);
+        assert_eq!(f(1, 1), 1 << 31);
+        assert_eq!(f(2, 0), 2);
+        assert_eq!(f(2, 1), 1);
+    }
+
+    #[test]
+    fn test_i64_rotl() {
+        let ee = build_ee_from_fn_body(
+            Type::Func(vec! [ ValType::I64, ValType::I64 ], vec! [ ValType::I64 ]),
+            vec! [],
+            vec! [
+                Opcode::GetLocal(0),
+                Opcode::GetLocal(1),
+                Opcode::I64Rotl,
+                Opcode::Return
+            ]
+        );
+
+        //println!("{}", ee.to_string());
+
+        let f: extern "C" fn (a: i64, b: i64) -> i64 = unsafe {
+            ::std::mem::transmute(ee.get_function_address(0))
+        };
+        assert_eq!(f(1, 0), 1);
+        assert_eq!(f(1, 1), 2);
+        assert_eq!(f(2, 0), 2);
+        assert_eq!(f(2, 1), 4);
+    }
+
+    #[test]
+    fn test_i64_rotr() {
+        let ee = build_ee_from_fn_body(
+            Type::Func(vec! [ ValType::I64, ValType::I64 ], vec! [ ValType::I64 ]),
+            vec! [],
+            vec! [
+                Opcode::GetLocal(0),
+                Opcode::GetLocal(1),
+                Opcode::I64Rotr,
+                Opcode::Return
+            ]
+        );
+
+        //println!("{}", ee.to_string());
+
+        let f: extern "C" fn (a: i64, b: i64) -> i64 = unsafe {
+            ::std::mem::transmute(ee.get_function_address(0))
+        };
+        assert_eq!(f(1, 0), 1);
+        assert_eq!(f(1, 1), 1 << 63);
+        assert_eq!(f(2, 0), 2);
+        assert_eq!(f(2, 1), 1);
     }
 
     #[test]

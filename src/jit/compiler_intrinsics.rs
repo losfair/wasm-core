@@ -9,6 +9,9 @@ pub struct CompilerIntrinsics {
     pub(super) ctz_i32: llvm::Function,
     pub(super) ctz_i64: llvm::Function,
     pub(super) rotl_i32: llvm::Function,
+    pub(super) rotl_i64: llvm::Function,
+    pub(super) rotr_i32: llvm::Function,
+    pub(super) rotr_i64: llvm::Function,
     pub(super) fabs_f32: llvm::Function,
     pub(super) fabs_f64: llvm::Function,
     pub(super) ceil_f32: llvm::Function,
@@ -340,6 +343,9 @@ impl CompilerIntrinsics {
                 )
             ),
             rotl_i32: Self::build_rotl_i32(ctx, m),
+            rotl_i64: Self::build_rotl_i64(ctx, m),
+            rotr_i32: Self::build_rotr_i32(ctx, m),
+            rotr_i64: Self::build_rotr_i64(ctx, m),
             checked_unreachable: Self::build_checked_unreachable(ctx, m),
             check_stack: Self::build_check_stack(ctx, m),
             select: Self::build_select(ctx, m),
@@ -434,6 +440,207 @@ impl CompilerIntrinsics {
                         builder.build_const_int(
                             llvm::Type::int32(ctx),
                             32,
+                            false
+                        ),
+                        f.get_param(1)
+                    )
+                )
+            );
+            builder.build_ret(ret);
+        }
+
+        f.verify();
+        f
+    }
+
+    fn build_rotl_i64(ctx: &llvm::Context, m: &llvm::Module) -> llvm::Function {
+        let f: llvm::Function = llvm::Function::new(
+            ctx,
+            m,
+            "rotl_i64",
+            llvm::Type::function(
+                ctx,
+                llvm::Type::int64(ctx),
+                &[
+                    llvm::Type::int64(ctx),
+                    llvm::Type::int64(ctx)
+                ]
+            )
+        );
+        let check_bb = llvm::BasicBlock::new(&f);
+        let ret_bb = llvm::BasicBlock::new(&f);
+        let calc_bb = llvm::BasicBlock::new(&f);
+
+        unsafe {
+            let builder = check_bb.builder();
+            let cmp_result = builder.build_icmp(
+                llvm::LLVMIntEQ,
+                f.get_param(1),
+                builder.build_const_int(
+                    llvm::Type::int64(ctx),
+                    0,
+                    false
+                )
+            );
+            builder.build_cond_br(
+                cmp_result,
+                &ret_bb,
+                &calc_bb
+            );
+        }
+
+        unsafe {
+            let builder = ret_bb.builder();
+            builder.build_ret(f.get_param(0));
+        }
+
+        unsafe {
+            let builder = calc_bb.builder();
+            let ret = builder.build_or(
+                builder.build_shl(
+                    f.get_param(0),
+                    f.get_param(1)
+                ),
+                builder.build_lshr(
+                    f.get_param(0),
+                    builder.build_sub(
+                        builder.build_const_int(
+                            llvm::Type::int64(ctx),
+                            64,
+                            false
+                        ),
+                        f.get_param(1)
+                    )
+                )
+            );
+            builder.build_ret(ret);
+        }
+
+        f.verify();
+        f
+    }
+
+    fn build_rotr_i32(ctx: &llvm::Context, m: &llvm::Module) -> llvm::Function {
+        let f: llvm::Function = llvm::Function::new(
+            ctx,
+            m,
+            "rotr_i32",
+            llvm::Type::function(
+                ctx,
+                llvm::Type::int32(ctx),
+                &[
+                    llvm::Type::int32(ctx),
+                    llvm::Type::int32(ctx)
+                ]
+            )
+        );
+        let check_bb = llvm::BasicBlock::new(&f);
+        let ret_bb = llvm::BasicBlock::new(&f);
+        let calc_bb = llvm::BasicBlock::new(&f);
+
+        unsafe {
+            let builder = check_bb.builder();
+            let cmp_result = builder.build_icmp(
+                llvm::LLVMIntEQ,
+                f.get_param(1),
+                builder.build_const_int(
+                    llvm::Type::int32(ctx),
+                    0,
+                    false
+                )
+            );
+            builder.build_cond_br(
+                cmp_result,
+                &ret_bb,
+                &calc_bb
+            );
+        }
+
+        unsafe {
+            let builder = ret_bb.builder();
+            builder.build_ret(f.get_param(0));
+        }
+
+        unsafe {
+            let builder = calc_bb.builder();
+            let ret = builder.build_or(
+                builder.build_lshr(
+                    f.get_param(0),
+                    f.get_param(1)
+                ),
+                builder.build_shl(
+                    f.get_param(0),
+                    builder.build_sub(
+                        builder.build_const_int(
+                            llvm::Type::int32(ctx),
+                            32,
+                            false
+                        ),
+                        f.get_param(1)
+                    )
+                )
+            );
+            builder.build_ret(ret);
+        }
+
+        f.verify();
+        f
+    }
+
+    fn build_rotr_i64(ctx: &llvm::Context, m: &llvm::Module) -> llvm::Function {
+        let f: llvm::Function = llvm::Function::new(
+            ctx,
+            m,
+            "rotr_i64",
+            llvm::Type::function(
+                ctx,
+                llvm::Type::int64(ctx),
+                &[
+                    llvm::Type::int64(ctx),
+                    llvm::Type::int64(ctx)
+                ]
+            )
+        );
+        let check_bb = llvm::BasicBlock::new(&f);
+        let ret_bb = llvm::BasicBlock::new(&f);
+        let calc_bb = llvm::BasicBlock::new(&f);
+
+        unsafe {
+            let builder = check_bb.builder();
+            let cmp_result = builder.build_icmp(
+                llvm::LLVMIntEQ,
+                f.get_param(1),
+                builder.build_const_int(
+                    llvm::Type::int64(ctx),
+                    0,
+                    false
+                )
+            );
+            builder.build_cond_br(
+                cmp_result,
+                &ret_bb,
+                &calc_bb
+            );
+        }
+
+        unsafe {
+            let builder = ret_bb.builder();
+            builder.build_ret(f.get_param(0));
+        }
+
+        unsafe {
+            let builder = calc_bb.builder();
+            let ret = builder.build_or(
+                builder.build_lshr(
+                    f.get_param(0),
+                    f.get_param(1)
+                ),
+                builder.build_shl(
+                    f.get_param(0),
+                    builder.build_sub(
+                        builder.build_const_int(
+                            llvm::Type::int64(ctx),
+                            64,
                             false
                         ),
                         f.get_param(1)
