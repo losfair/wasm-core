@@ -225,6 +225,14 @@ pub fn translate_opcodes(ops: &[elements::Opcode]) -> Vec<wasm_core::opcode::Opc
                 result.push(WcOp::I64Load(Memarg { offset: offset, align: align }));
                 result.push(WcOp::I64ReinterpretF64);
             },
+            PwOp::F32Store(align, offset) => {
+                result.push(WcOp::F32ReinterpretI32);
+                result.push(WcOp::I32Store(Memarg { offset: offset, align: align }));
+            },
+            PwOp::F64Store(align, offset) => {
+                result.push(WcOp::F64ReinterpretI64);
+                result.push(WcOp::I64Store(Memarg { offset: offset, align: align }));
+            },
             PwOp::F32ReinterpretI32 => result.push(WcOp::F32ReinterpretI32),
             PwOp::F64ReinterpretI64 => result.push(WcOp::F64ReinterpretI64),
             PwOp::I32ReinterpretF32 => result.push(WcOp::I32ReinterpretF32),
@@ -371,10 +379,6 @@ pub fn translate_opcodes(ops: &[elements::Opcode]) -> Vec<wasm_core::opcode::Opc
                 let label = labels.iter_mut().rev().nth(otherwise as usize).expect("Branch target out of bound");
                 label.continuations.push(Continuation::brtable(result.len(), targets.len()));
                 result.push(WcOp::JmpTable(jmp_targets, 0xffffffff));
-            },
-            _ => {
-                dprintln!("Warning: Generating trap for unimplemented opcode: {:?}", op);
-                result.push(WcOp::NotImplemented(format!("{:?}", op)));
             }
         }
     }
