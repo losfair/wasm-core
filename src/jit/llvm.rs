@@ -5,7 +5,11 @@ use llvm_sys::execution_engine::*;
 use llvm_sys::target::*;
 use llvm_sys::analysis::*;
 use llvm_sys::transforms::pass_manager_builder::*;
-use llvm_sys::{LLVMIntPredicate, LLVMRealPredicate};
+use llvm_sys::{
+    LLVMIntPredicate,
+    LLVMRealPredicate,
+    LLVMLinkage
+};
 use std::rc::Rc;
 use std::cell::Cell;
 use std::ffi::{CStr, CString};
@@ -15,6 +19,7 @@ pub use llvm_sys::LLVMOpcode;
 pub use llvm_sys::LLVMIntPredicate::*;
 pub use llvm_sys::LLVMRealPredicate::*;
 pub use llvm_sys::prelude::LLVMValueRef;
+pub use llvm_sys::LLVMLinkage::*;
 
 fn empty_cstr() -> *const c_char {
     b"\0".as_ptr() as _
@@ -399,6 +404,12 @@ impl Function {
                 self._ref,
                 LLVMVerifierFailureAction::LLVMAbortProcessAction
             );
+        }
+    }
+
+    pub fn set_linkage(&self, linkage: LLVMLinkage) {
+        unsafe {
+            LLVMSetLinkage(self._ref, linkage);
         }
     }
 }

@@ -400,6 +400,7 @@ impl CompilerIntrinsics {
                 ]
             )
         );
+        f.set_linkage(llvm::LLVMInternalLinkage);
         let check_bb = llvm::BasicBlock::new(&f);
         let ret_bb = llvm::BasicBlock::new(&f);
         let calc_bb = llvm::BasicBlock::new(&f);
@@ -467,6 +468,7 @@ impl CompilerIntrinsics {
                 ]
             )
         );
+        f.set_linkage(llvm::LLVMInternalLinkage);
         let check_bb = llvm::BasicBlock::new(&f);
         let ret_bb = llvm::BasicBlock::new(&f);
         let calc_bb = llvm::BasicBlock::new(&f);
@@ -534,6 +536,7 @@ impl CompilerIntrinsics {
                 ]
             )
         );
+        f.set_linkage(llvm::LLVMInternalLinkage);
         let check_bb = llvm::BasicBlock::new(&f);
         let ret_bb = llvm::BasicBlock::new(&f);
         let calc_bb = llvm::BasicBlock::new(&f);
@@ -601,6 +604,7 @@ impl CompilerIntrinsics {
                 ]
             )
         );
+        f.set_linkage(llvm::LLVMInternalLinkage);
         let check_bb = llvm::BasicBlock::new(&f);
         let ret_bb = llvm::BasicBlock::new(&f);
         let calc_bb = llvm::BasicBlock::new(&f);
@@ -665,6 +669,7 @@ impl CompilerIntrinsics {
                 &[]
             )
         );
+        f.set_linkage(llvm::LLVMInternalLinkage);
         let initial_bb = llvm::BasicBlock::new(&f);
 
         unsafe {
@@ -705,6 +710,7 @@ impl CompilerIntrinsics {
                 &[]
             )
         );
+        f.set_linkage(llvm::LLVMInternalLinkage);
         let initial_bb = llvm::BasicBlock::new(&f);
 
         unsafe {
@@ -755,6 +761,7 @@ impl CompilerIntrinsics {
                 ]
             )
         );
+        f.set_linkage(llvm::LLVMInternalLinkage);
         let initial_bb = llvm::BasicBlock::new(&f);
 
         unsafe {
@@ -832,6 +839,7 @@ impl CompilerIntrinsics {
                 ]
             )
         );
+        f.set_linkage(llvm::LLVMInternalLinkage);
         let initial_bb = llvm::BasicBlock::new(&f);
 
         unsafe {
@@ -896,6 +904,7 @@ impl CompilerIntrinsics {
                 ]
             )
         );
+        f.set_linkage(llvm::LLVMInternalLinkage);
 
         let initial_bb = llvm::BasicBlock::new(&f);
         let if_true_bb = llvm::BasicBlock::new(&f);
@@ -947,6 +956,7 @@ impl CompilerIntrinsics {
                 ]
             )
         );
+        f.set_linkage(llvm::LLVMInternalLinkage);
 
         let jit_info = unsafe {
             &mut *rt.get_jit_info()
@@ -1083,6 +1093,8 @@ impl CompilerIntrinsics {
                 ]
             )
         );
+        f.set_linkage(llvm::LLVMInternalLinkage);
+
         let initial_bb = llvm::BasicBlock::new(&f);
         let check_ok_bb = llvm::BasicBlock::new(&f);
         let check_failed_bb = llvm::BasicBlock::new(&f);
@@ -1147,6 +1159,8 @@ impl CompilerIntrinsics {
                 ]
             )
         );
+        f.set_linkage(llvm::LLVMInternalLinkage);
+
         let initial_bb = llvm::BasicBlock::new(&f);
 
         unsafe {
@@ -1203,6 +1217,8 @@ impl CompilerIntrinsics {
                 ]
             )
         );
+        f.set_linkage(llvm::LLVMInternalLinkage);
+        
         let initial_bb = llvm::BasicBlock::new(&f);
 
         unsafe {
