@@ -33,6 +33,9 @@ extern crate lazy_static;
 extern crate llvm_sys;
 
 #[cfg(feature = "jit")]
+extern crate smallvec;
+
+#[cfg(feature = "jit")]
 pub mod jit;
 
 #[cfg(feature = "std")]

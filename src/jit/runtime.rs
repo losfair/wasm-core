@@ -6,6 +6,8 @@ use module::{Module, Type, ValType};
 use value::Value;
 use super::ondemand::Ondemand;
 
+use smallvec::SmallVec;
+
 pub struct Runtime {
     pub(super) opt_level: u32,
     mem: UnsafeCell<Vec<u8>>,
@@ -171,7 +173,7 @@ impl Runtime {
             }
         };
 
-        let mut call_args: Vec<Value> = Vec::new();
+        let mut call_args: SmallVec<[Value; 16]> = SmallVec::with_capacity(req.args.len());
 
         for i in 0..req.args.len() {
             call_args.push(Value::reinterpret_from_i64(req.args[i], ty_args[i]));
@@ -200,13 +202,13 @@ impl Runtime {
 }
 
 pub struct NativeInvokeRequest {
-    args: Vec<i64>
+    args: SmallVec<[i64; 16]>
 }
 
 impl NativeInvokeRequest {
     fn new(n_args: usize) -> NativeInvokeRequest {
         NativeInvokeRequest {
-            args: Vec::with_capacity(n_args)
+            args: SmallVec::with_capacity(n_args)
         }
     }
 }
