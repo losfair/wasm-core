@@ -1,13 +1,13 @@
 [package]
 name = "wasm-translator"
-version = "0.1.0"
+version = "0.1.1"
 authors = ["losfair <zhy20000919@hotmail.com>"]
 description = "Portable WebAssembly implementation (translator)"
 license = "LGPL-3.0"
 keywords = ["wasm", "webassembly"]
 
 [dependencies]
-wasm-core = { version = "0.2.0", features = ["jit"] }
+wasm-core = { version = "0.2.1", features = ["jit"] }
 parity-wasm = "0.27.2"
 serde_json = "1.0"
 serde = "1.0"
