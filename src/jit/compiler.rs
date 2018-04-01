@@ -110,6 +110,10 @@ impl ExecutionContext {
         F::build(self.get_function_address(id))
     }
 
+    pub fn set_native_resolver<R: NativeResolver>(&self, resolver: R) {
+        self.rt.set_native_resolver(resolver);
+    }
+
     pub fn execute(&self, id: usize, args: &[Value]) -> Option<Value> {
         let source_fn = &self.source_module.functions[id];
         let ty = &self.source_module.types[source_fn.typeidx as usize];
