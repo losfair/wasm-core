@@ -39,6 +39,39 @@ impl CompiledModule {
     }
 }
 
+pub unsafe trait JitFuncTy {
+    fn has_ret() -> bool;
+    fn n_args() -> usize;
+    unsafe fn build(raw: *const c_void) -> Self;
+}
+
+macro_rules! unsafe_impl_jit_func_ty {
+    ($sig:ty, $has_ret:expr, $n_args:expr) => {
+        unsafe impl JitFuncTy for $sig {
+            fn has_ret() -> bool { $has_ret }
+            fn n_args() -> usize { $n_args }
+            unsafe fn build(raw: *const c_void) -> Self {
+                ::std::mem::transmute(raw)
+            }
+        }
+    }
+}
+
+unsafe_impl_jit_func_ty!(extern "C" fn (), false, 0);
+unsafe_impl_jit_func_ty!(extern "C" fn () -> i64, true, 0);
+unsafe_impl_jit_func_ty!(extern "C" fn (i64), false, 1);
+unsafe_impl_jit_func_ty!(extern "C" fn (i64) -> i64, true, 1);
+unsafe_impl_jit_func_ty!(extern "C" fn (i64, i64), false, 2);
+unsafe_impl_jit_func_ty!(extern "C" fn (i64, i64) -> i64, true, 2);
+unsafe_impl_jit_func_ty!(extern "C" fn (i64, i64, i64), false, 3);
+unsafe_impl_jit_func_ty!(extern "C" fn (i64, i64, i64) -> i64, true, 3);
+unsafe_impl_jit_func_ty!(extern "C" fn (i64, i64, i64, i64), false, 4);
+unsafe_impl_jit_func_ty!(extern "C" fn (i64, i64, i64, i64) -> i64, true, 4);
+unsafe_impl_jit_func_ty!(extern "C" fn (i64, i64, i64, i64, i64), false, 5);
+unsafe_impl_jit_func_ty!(extern "C" fn (i64, i64, i64, i64, i64) -> i64, true, 5);
+unsafe_impl_jit_func_ty!(extern "C" fn (i64, i64, i64, i64, i64, i64), false, 6);
+unsafe_impl_jit_func_ty!(extern "C" fn (i64, i64, i64, i64, i64, i64) -> i64, true, 6);
+
 impl ExecutionContext {
     pub fn from_compiled_module(m: CompiledModule) -> ExecutionContext {
         ExecutionContext {
@@ -49,6 +82,32 @@ impl ExecutionContext {
 
     pub fn get_function_address(&self, id: usize) -> *const c_void {
         self.rt.get_function_addr(id)
+    }
+
+    pub unsafe fn get_function_checked<F: JitFuncTy>(&self, id: usize) -> F {
+        let has_ret = F::has_ret();
+        let n_args = F::n_args();
+
+        let source_fn = &self.source_module.functions[id];
+        let ty = &self.source_module.types[source_fn.typeidx as usize];
+        let Type::Func(ref ty_args, ref ty_ret) = *ty;
+
+        if n_args != ty_args.len() {
+            panic!("Argument length mismatch");
+        }
+
+        if ty_ret.len() > 0 {
+            assert_eq!(ty_ret.len(), 1);
+            if !has_ret {
+                panic!("Expecting exactly one return value");
+            }
+        } else {
+            if has_ret {
+                panic!("Expecting no return values");
+            }
+        }
+
+        F::build(self.get_function_address(id))
     }
 
     pub fn execute(&self, id: usize, args: &[Value]) -> Option<Value> {
@@ -2962,7 +3021,7 @@ mod tests {
         //println!("{}", ee.ee.to_string());
 
         let f: extern "C" fn () -> i64 = unsafe {
-            ::std::mem::transmute(ee.get_function_address(0))
+            ee.get_function_checked(0)
         };
         let ret = f();
         assert_eq!(ret, 42);
@@ -2981,7 +3040,7 @@ mod tests {
         );
 
         let f: extern "C" fn () -> i64 = unsafe {
-            ::std::mem::transmute(ee.get_function_address(0))
+            ee.get_function_checked(0)
         };
         match catch_unwind(AssertUnwindSafe(|| f())) {
             Ok(_) => panic!("Expecting panic"),
@@ -3001,7 +3060,7 @@ mod tests {
         );
 
         let f: extern "C" fn () -> i64 = unsafe {
-            ::std::mem::transmute(ee.get_function_address(0))
+            ee.get_function_checked(0)
         };
         match catch_unwind(AssertUnwindSafe(|| f())) {
             Ok(_) => panic!("Expecting panic"),
@@ -3024,7 +3083,7 @@ mod tests {
         );
 
         let f: extern "C" fn () -> i64 = unsafe {
-            ::std::mem::transmute(ee.get_function_address(0))
+            ee.get_function_checked(0)
         };
         let ret = f();
         assert_eq!(ret, 1);
@@ -3045,7 +3104,7 @@ mod tests {
         );
 
         let f: extern "C" fn () -> i64 = unsafe {
-            ::std::mem::transmute(ee.get_function_address(0))
+            ee.get_function_checked(0)
         };
         let ret = f();
         assert_eq!(ret, 2);
@@ -3067,7 +3126,7 @@ mod tests {
         //println!("{}", ee.to_string());
 
         let f: extern "C" fn (v: i64) -> i64 = unsafe {
-            ::std::mem::transmute(ee.get_function_address(0))
+            ee.get_function_checked(0)
         };
         let ret = f(22);
         assert_eq!(ret, 23);
@@ -3091,7 +3150,7 @@ mod tests {
         //println!("{}", ee.to_string());
 
         let f: extern "C" fn (v: i64) -> i64 = unsafe {
-            ::std::mem::transmute(ee.get_function_address(0))
+            ee.get_function_checked(0)
         };
         let ret = f(22);
         assert_eq!(ret, 22);
@@ -3123,7 +3182,7 @@ mod tests {
         //println!("{}", ee.to_string());
 
         let f: extern "C" fn (v: i64) -> i64 = unsafe {
-            ::std::mem::transmute(ee.get_function_address(0))
+            ee.get_function_checked(0)
         };
         assert_eq!(f(0) as i32, 11);
         assert_eq!(f(1) as i32, 22);
@@ -3146,7 +3205,7 @@ mod tests {
         //println!("{}", ee.to_string());
 
         let f: extern "C" fn (v: i64) -> i64 = unsafe {
-            ::std::mem::transmute(ee.get_function_address(0))
+            ee.get_function_checked(0)
         };
         let ret = f(939230566849);
         assert_eq!(ret as i32, -1367270975);
@@ -3185,7 +3244,7 @@ mod tests {
         //println!("{}", ee.ee.to_string());
 
         let f: extern "C" fn (v: i64) -> i64 = unsafe {
-            ::std::mem::transmute(ee.get_function_address(0))
+            ee.get_function_checked(0)
         };
         assert_eq!(f(35), 45);
     }
@@ -3214,7 +3273,7 @@ mod tests {
         //println!("{}", ee.to_string());
 
         let f: extern "C" fn (v: i64) -> i64 = unsafe {
-            ::std::mem::transmute(ee.get_function_address(0))
+            ee.get_function_checked(0)
         };
         assert_eq!(f(42), 42);
     }
@@ -3243,7 +3302,7 @@ mod tests {
         //println!("{}", ee.to_string());
 
         let f: extern "C" fn (v: i64) -> i64 = unsafe {
-            ::std::mem::transmute(ee.get_function_address(0))
+            ee.get_function_checked(0)
         };
         assert_eq!(f(51328519), 7);
         assert_eq!(f(6615), 215);
@@ -3273,7 +3332,7 @@ mod tests {
         //println!("{}", ee.to_string());
 
         let f: extern "C" fn (v: i64) -> i64 = unsafe {
-            ::std::mem::transmute(ee.get_function_address(0))
+            ee.get_function_checked(0)
         };
         assert_eq!(f(51328519), 7);
         assert_eq!(f(6615) as u32, 4294967255);
@@ -3303,7 +3362,7 @@ mod tests {
         //println!("{}", ee.to_string());
 
         let f: extern "C" fn (v: i64) -> i64 = unsafe {
-            ::std::mem::transmute(ee.get_function_address(0))
+            ee.get_function_checked(0)
         };
         assert_eq!(f(51328519), 13831);
         assert_eq!(f(3786093), 50541);
@@ -3333,7 +3392,7 @@ mod tests {
         //println!("{}", ee.to_string());
 
         let f: extern "C" fn (v: i64) -> i64 = unsafe {
-            ::std::mem::transmute(ee.get_function_address(0))
+            ee.get_function_checked(0)
         };
         assert_eq!(f(51328519), 13831);
         assert_eq!(f(3786093) as u32, 4294952301);
@@ -3354,7 +3413,7 @@ mod tests {
         //println!("{}", ee.to_string());
 
         let f: extern "C" fn (v: i64) -> i64 = unsafe {
-            ::std::mem::transmute(ee.get_function_address(0))
+            ee.get_function_checked(0)
         };
         assert_eq!(f(0), 32);
         assert_eq!(f(1), 0);
@@ -3378,7 +3437,7 @@ mod tests {
         //println!("{}", ee.to_string());
 
         let f: extern "C" fn (v: i64) -> i64 = unsafe {
-            ::std::mem::transmute(ee.get_function_address(0))
+            ee.get_function_checked(0)
         };
         assert_eq!(f(0), 32);
         assert_eq!(f(1), 31);
@@ -3403,7 +3462,7 @@ mod tests {
         //println!("{}", ee.to_string());
 
         let f: extern "C" fn (a: i64, b: i64) -> i64 = unsafe {
-            ::std::mem::transmute(ee.get_function_address(0))
+            ee.get_function_checked(0)
         };
         unsafe {
             assert_eq!(
@@ -3431,7 +3490,7 @@ mod tests {
         //println!("{}", ee.to_string());
 
         let f: extern "C" fn (v: i64) -> i64 = unsafe {
-            ::std::mem::transmute(ee.get_function_address(0))
+            ee.get_function_checked(0)
         };
         unsafe {
             assert_eq!(
@@ -3458,7 +3517,7 @@ mod tests {
         //println!("{}", ee.to_string());
 
         let f: extern "C" fn (v: i64) -> i64 = unsafe {
-            ::std::mem::transmute(ee.get_function_address(0))
+            ee.get_function_checked(0)
         };
         unsafe {
             assert_eq!(
@@ -3485,7 +3544,7 @@ mod tests {
         //println!("{}", ee.to_string());
 
         let f: extern "C" fn (v: i64) -> i64 = unsafe {
-            ::std::mem::transmute(ee.get_function_address(0))
+            ee.get_function_checked(0)
         };
         assert_eq!(f(0), 0);
         assert_eq!(f(1), 1);
@@ -3510,7 +3569,7 @@ mod tests {
         //println!("{}", ee.to_string());
 
         let f: extern "C" fn (a: i64, b: i64) -> i64 = unsafe {
-            ::std::mem::transmute(ee.get_function_address(0))
+            ee.get_function_checked(0)
         };
         assert_eq!(f(1, 0), 1);
         assert_eq!(f(1, 1), 2);
@@ -3534,7 +3593,7 @@ mod tests {
         //println!("{}", ee.to_string());
 
         let f: extern "C" fn (a: i64, b: i64) -> i64 = unsafe {
-            ::std::mem::transmute(ee.get_function_address(0))
+            ee.get_function_checked(0)
         };
         assert_eq!(f(1, 0), 1);
         assert_eq!(f(1, 1), 1 << 31);
@@ -3558,7 +3617,7 @@ mod tests {
         //println!("{}", ee.to_string());
 
         let f: extern "C" fn (a: i64, b: i64) -> i64 = unsafe {
-            ::std::mem::transmute(ee.get_function_address(0))
+            ee.get_function_checked(0)
         };
         assert_eq!(f(1, 0), 1);
         assert_eq!(f(1, 1), 2);
@@ -3582,7 +3641,7 @@ mod tests {
         //println!("{}", ee.to_string());
 
         let f: extern "C" fn (a: i64, b: i64) -> i64 = unsafe {
-            ::std::mem::transmute(ee.get_function_address(0))
+            ee.get_function_checked(0)
         };
         assert_eq!(f(1, 0), 1);
         assert_eq!(f(1, 1), 1 << 63);
@@ -3604,7 +3663,7 @@ mod tests {
         //println!("{}", ee.to_string());
 
         let f: extern "C" fn () -> i64 = unsafe {
-            ::std::mem::transmute(ee.get_function_address(0))
+            ee.get_function_checked(0)
         };
 
         let default_rt_config = RuntimeConfig::default();
@@ -3626,7 +3685,7 @@ mod tests {
         //println!("{}", ee.to_string());
 
         let f: extern "C" fn () -> i64 = unsafe {
-            ::std::mem::transmute(ee.get_function_address(0))
+            ee.get_function_checked(0)
         };
 
         let default_rt_config = RuntimeConfig::default();
@@ -3678,7 +3737,7 @@ mod tests {
         //println!("{}", ee.ee.to_string());
 
         let f: extern "C" fn (v: i64) -> i64 = unsafe {
-            ::std::mem::transmute(ee.get_function_address(0))
+            ee.get_function_checked(0)
         };
         assert_eq!(f(35), 45);
     }
@@ -3737,7 +3796,7 @@ mod tests {
         //println!("{}", ee.ee.to_string());
 
         let f: extern "C" fn (v: i64) -> i64 = unsafe {
-            ::std::mem::transmute(ee.get_function_address(0))
+            ee.get_function_checked(0)
         };
         assert_eq!(f(35), 40);
     }
@@ -3793,13 +3852,13 @@ mod tests {
         //println!("{}", ee.ee.to_string());
 
         let setter: extern "C" fn (v: i64) = unsafe {
-            ::std::mem::transmute(ee.get_function_address(0))
+            ee.get_function_checked(0)
         };
         let getter0: extern "C" fn () -> i64 = unsafe {
-            ::std::mem::transmute(ee.get_function_address(1))
+            ee.get_function_checked(1)
         };
         let getter1: extern "C" fn () -> i64 = unsafe {
-            ::std::mem::transmute(ee.get_function_address(2))
+            ee.get_function_checked(2)
         };
         setter(42);
         assert_eq!(getter0(), 42);
@@ -3820,12 +3879,53 @@ mod tests {
         //println!("{}", ee.to_string());
 
         let f: extern "C" fn () = unsafe {
-            ::std::mem::transmute(ee.get_function_address(0))
+            ee.get_function_checked(0)
         };
         let ret = catch_unwind(AssertUnwindSafe(|| f()));
         match ret {
             Ok(_) => panic!("Expecting panic"),
             Err(_) => {}
         }
+    }
+
+    #[test]
+    fn test_get_function_checked() {
+        let ee = build_ee_from_fn_bodies(
+            vec! [
+                (
+                    Type::Func(vec! [ ValType::I32 ], vec! [ ]),
+                    vec! [],
+                    vec! [
+                        Opcode::Return
+                    ]
+                ),
+                (
+                    Type::Func(vec! [ ], vec! [ ValType::I32 ]),
+                    vec! [],
+                    vec! [
+                        Opcode::I32Const(0),
+                        Opcode::Return
+                    ]
+                )
+            ]
+        );
+
+        //println!("{}", ee.to_string());
+
+        catch_unwind(AssertUnwindSafe(|| {
+            let _: extern "C" fn () = unsafe { ee.get_function_checked(0) };
+        })).unwrap_err();
+
+        catch_unwind(AssertUnwindSafe(|| {
+            let _: extern "C" fn (i64) = unsafe { ee.get_function_checked(0) };
+        })).unwrap();
+
+        catch_unwind(AssertUnwindSafe(|| {
+            let _: extern "C" fn () = unsafe { ee.get_function_checked(1) };
+        })).unwrap_err();
+
+        catch_unwind(AssertUnwindSafe(|| {
+            let _: extern "C" fn () -> i64 = unsafe { ee.get_function_checked(1) };
+        })).unwrap();
     }
 }
