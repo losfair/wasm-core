@@ -146,16 +146,17 @@ impl Runtime {
         self.jit_info.get()
     }
 
-    pub(super) extern "C" fn _jit_native_invoke_request(n_args: usize) -> *mut NativeInvokeRequest {
-        Box::into_raw(Box::new(NativeInvokeRequest::new(n_args)))
+    pub(super) unsafe extern "C" fn _jit_native_invoke_request(ret_place: *mut NativeInvokeRequest, n_args: usize) {
+        ::std::ptr::write(ret_place, NativeInvokeRequest::new(n_args));
     }
 
     pub(super) extern "C" fn _jit_native_invoke_push_arg(req: &mut NativeInvokeRequest, arg: i64) {
         req.args.push(arg);
     }
 
-    pub(super) extern "C" fn _jit_native_invoke_complete(rt: &Runtime, id: usize, req: *mut NativeInvokeRequest) -> i64 {
-        let req = unsafe { Box::from_raw(req) };
+    pub(super) unsafe extern "C" fn _jit_native_invoke_complete(req: *mut NativeInvokeRequest, rt: &Runtime, id: usize) -> i64 {
+        let req: NativeInvokeRequest = ::std::ptr::read(req);
+
         let nf = &rt.native_functions[id];
         let ty = &rt.source_module.types[nf.borrow().typeidx];
         let Type::Func(ref ty_args, ref ty_ret) = *ty;
@@ -165,7 +166,7 @@ impl Runtime {
         let native_resolver = rt.native_resolver.borrow();
 
         let mut invoke_ctx = JitNativeInvokeContext {
-            mem: unsafe { &mut *rt.mem.get() },
+            mem: &mut *rt.mem.get(),
             resolver: if let Some(ref v) = *native_resolver {
                 Some(&**v)
             } else {

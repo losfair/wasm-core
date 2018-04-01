@@ -5,7 +5,7 @@ use module::*;
 use cfgraph::*;
 use super::llvm;
 use opcode::{Opcode, Memarg};
-use super::runtime::{Runtime, RuntimeConfig};
+use super::runtime::{Runtime, RuntimeConfig, NativeInvokeRequest};
 use executor::NativeResolver;
 use value::Value;
 use super::compiler_intrinsics::CompilerIntrinsics;
@@ -1121,7 +1121,24 @@ impl<'a> Compiler<'a> {
 
                             call_args.reverse();
 
-                            let req = builder.build_call_raw(
+                            let raw_stack_state = builder.build_call(
+                                &intrinsics.stacksave,
+                                &[]
+                            );
+
+                            let nir_place = builder.build_alloca(
+                                llvm::Type::array(
+                                    ctx,
+                                    llvm::Type::int8(ctx),
+                                    ::std::mem::size_of::<NativeInvokeRequest>()
+                                )
+                            );
+                            let nir_place = builder.build_bitcast(
+                                nir_place,
+                                llvm::Type::pointer(llvm::Type::int8(ctx))
+                            );
+
+                            builder.build_call_raw(
                                 builder.build_cast(
                                     llvm::LLVMOpcode::LLVMIntToPtr,
                                     builder.build_const_int(
@@ -1131,13 +1148,15 @@ impl<'a> Compiler<'a> {
                                     ),
                                     llvm::Type::pointer(llvm::Type::function(
                                         ctx,
-                                        llvm::Type::int_native(ctx), // req ptr
+                                        llvm::Type::void(ctx),
                                         &[
+                                            llvm::Type::pointer(llvm::Type::int8(ctx)), // ret_place
                                             llvm::Type::int_native(ctx) // n_args
                                         ]
                                     ))
                                 ),
                                 &[
+                                    nir_place,
                                     builder.build_const_int(
                                         llvm::Type::int_native(ctx),
                                         call_args.len() as _,
@@ -1158,13 +1177,13 @@ impl<'a> Compiler<'a> {
                                             ctx,
                                             llvm::Type::void(ctx),
                                             &[
-                                                llvm::Type::int_native(ctx), // req ptr
+                                                llvm::Type::pointer(llvm::Type::int8(ctx)), // req ptr
                                                 llvm::Type::int64(ctx) // arg
                                             ]
                                         ))
                                     ),
                                     &[
-                                        req,
+                                        nir_place,
                                         *arg
                                     ]
                                 );
@@ -1182,13 +1201,14 @@ impl<'a> Compiler<'a> {
                                         ctx,
                                         llvm::Type::int64(ctx),
                                         &[
+                                            llvm::Type::pointer(llvm::Type::int8(ctx)),
                                             llvm::Type::int_native(ctx), // rt
-                                            llvm::Type::int_native(ctx), // id
-                                            llvm::Type::int_native(ctx) // req ptr
+                                            llvm::Type::int_native(ctx) // id
                                         ]
                                     ))
                                 ),
                                 &[
+                                    nir_place,
                                     builder.build_const_int(
                                         llvm::Type::int_native(ctx),
                                         rt as *const Runtime as usize as _,
@@ -1198,8 +1218,13 @@ impl<'a> Compiler<'a> {
                                         llvm::Type::int_native(ctx),
                                         id as _,
                                         false
-                                    ),
-                                    req
+                                    )
+                                ]
+                            );
+                            builder.build_call(
+                                &intrinsics.stackrestore,
+                                &[
+                                    raw_stack_state
                                 ]
                             );
                             if ft_ret.len() > 0 {
@@ -3774,11 +3799,22 @@ mod tests {
             vec! [
                 (
                     Type::Func(vec! [ ValType::I32 ], vec! [ ValType::I32 ] ),
-                    vec! [],
+                    vec! [ ValType::I32, ValType::I32 ],
                     vec! [
+                        Opcode::GetLocal(1),
+                        Opcode::I32Const(100000),
+                        Opcode::I32Eq,
+                        Opcode::JmpIf(13),
                         Opcode::GetLocal(0),
                         Opcode::I32Const(5),
                         Opcode::NativeInvoke(0),
+                        Opcode::SetLocal(2),
+                        Opcode::GetLocal(1),
+                        Opcode::I32Const(1),
+                        Opcode::I32Add,
+                        Opcode::SetLocal(1),
+                        Opcode::Jmp(0),
+                        Opcode::GetLocal(2),
                         Opcode::Return
                     ]
                 ),

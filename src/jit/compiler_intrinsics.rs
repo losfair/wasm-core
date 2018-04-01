@@ -2,6 +2,8 @@ use super::llvm;
 use super::runtime::Runtime;
 
 pub struct CompilerIntrinsics {
+    pub(super) stacksave: llvm::Function,
+    pub(super) stackrestore: llvm::Function,
     pub(super) popcnt_i32: llvm::Function,
     pub(super) popcnt_i64: llvm::Function,
     pub(super) clz_i32: llvm::Function,
@@ -44,6 +46,28 @@ pub struct CompilerIntrinsics {
 impl CompilerIntrinsics {
     pub fn new(ctx: &llvm::Context, m: &llvm::Module, rt: &Runtime) -> CompilerIntrinsics {
         CompilerIntrinsics {
+            stacksave: llvm::Function::new(
+                ctx,
+                m,
+                "llvm.stacksave",
+                llvm::Type::function(
+                    ctx,
+                    llvm::Type::pointer(llvm::Type::int8(ctx)),
+                    &[]
+                )
+            ),
+            stackrestore: llvm::Function::new(
+                ctx,
+                m,
+                "llvm.stackrestore",
+                llvm::Type::function(
+                    ctx,
+                    llvm::Type::void(ctx),
+                    &[
+                        llvm::Type::pointer(llvm::Type::int8(ctx))
+                    ]
+                )
+            ),
             popcnt_i32: llvm::Function::new(
                 ctx,
                 m,
