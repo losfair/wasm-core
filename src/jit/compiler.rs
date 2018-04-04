@@ -2810,9 +2810,7 @@ impl<'a> Compiler<'a> {
                                 )
                             );
                         },
-                        Opcode::Memcpy | Opcode::NotImplemented(_)
-                            | Opcode::I32Rotr
-                            | Opcode::I64Rotl | Opcode::I64Rotr => {
+                        Opcode::Memcpy | Opcode::NotImplemented(_) => {
                             // not implemented
                             eprintln!("Warning: Not implemented: {:?}", op);
                             let builder = target_bb.builder();
