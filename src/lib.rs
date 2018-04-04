@@ -35,6 +35,12 @@ extern crate llvm_sys;
 #[cfg(feature = "jit")]
 extern crate smallvec;
 
+#[cfg(feature = "trans")]
+extern crate parity_wasm;
+
+#[cfg(feature = "trans")]
+pub mod trans;
+
 #[cfg(feature = "jit")]
 pub mod jit;
 
