@@ -1,4 +1,4 @@
-use translator::wasm_core::executor::{
+use wasm_core::executor::{
     ExecuteResult,
     ExecuteError
 };

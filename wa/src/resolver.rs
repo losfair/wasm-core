@@ -1,6 +1,6 @@
-use translator::wasm_core::value::Value;
-use translator::wasm_core::executor::{RuntimeConfig, NativeResolver, NativeEntry, ExecuteError};
-use translator::wasm_core::resolver::EmscriptenResolver;
+use wasm_core::value::Value;
+use wasm_core::executor::{RuntimeConfig, NativeResolver, NativeEntry, ExecuteError};
+use wasm_core::resolver::EmscriptenResolver;
 
 use syscall::SyscallResolver;
 

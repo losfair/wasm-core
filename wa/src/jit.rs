@@ -1,8 +1,8 @@
-use translator::wasm_core::jit::compiler::Compiler;
-use translator::wasm_core::jit::runtime::RuntimeConfig;
-use translator::wasm_core::resolver::EmscriptenResolver;
-use translator::wasm_core::module::{Module, Export, Type};
-use translator::wasm_core::value::Value;
+use wasm_core::jit::compiler::Compiler;
+use wasm_core::jit::runtime::RuntimeConfig;
+use wasm_core::resolver::EmscriptenResolver;
+use wasm_core::module::{Module, Export, Type};
+use wasm_core::value::Value;
 use resolver::PrivilegedResolver;
 use syscall::SyscallResolver;
 

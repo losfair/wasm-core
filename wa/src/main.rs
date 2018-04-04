@@ -1,4 +1,4 @@
-extern crate wasm_translator as translator;
+extern crate wasm_core;
 
 mod syscall;
 mod stream;
@@ -11,13 +11,13 @@ use std::env;
 use std::io::Read;
 use std::io::Write;
 
-use translator::wasm_core::value::Value;
-use translator::wasm_core::module::{Module, Export, Type};
-use translator::wasm_core::executor::{VirtualMachine, RuntimeConfig, NativeResolver, NativeEntry, ExecuteError};
-use translator::wasm_core::resolver::EmscriptenResolver;
-use translator::wasm_core::optimizers::RemoveDeadBasicBlocks;
-use translator::wasm_core::cfgraph::CFGraph;
-use translator::config::ModuleConfig;
+use wasm_core::value::Value;
+use wasm_core::module::{Module, Export, Type};
+use wasm_core::executor::{VirtualMachine, RuntimeConfig, NativeResolver, NativeEntry, ExecuteError};
+use wasm_core::resolver::EmscriptenResolver;
+use wasm_core::optimizers::RemoveDeadBasicBlocks;
+use wasm_core::cfgraph::CFGraph;
+use wasm_core::trans::config::ModuleConfig;
 
 use syscall::SyscallResolver;
 use resolver::PrivilegedResolver;
@@ -35,7 +35,7 @@ fn main() {
 
     f.read_to_end(&mut code).unwrap();
 
-    let mut module = translator::translate_module_raw(code.as_slice(), cfg);
+    let mut module = wasm_core::trans::translate_module_raw(code.as_slice(), cfg);
     for f in &mut module.functions {
         let mut cfg = CFGraph::from_function(f.body.opcodes.as_slice()).unwrap();
         cfg.validate().unwrap();

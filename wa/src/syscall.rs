@@ -1,13 +1,13 @@
 use std::cell::RefCell;
 
-use translator::wasm_core::executor::{
+use wasm_core::executor::{
     NativeEntry,
     NativeResolver,
     GlobalStateProvider,
     ExecuteResult,
     ExecuteError
 };
-use translator::wasm_core::value::Value;
+use wasm_core::value::Value;
 
 use stream::StreamManager;
 use utils;
