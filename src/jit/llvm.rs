@@ -94,6 +94,16 @@ impl Module {
         }
     }
 
+    pub fn deep_clone(&self) -> Module {
+        Module {
+            inner: Rc::new(ModuleImpl {
+                _context: self.inner._context.clone(),
+                _ref: unsafe { LLVMCloneModule(self.inner._ref) },
+                _ref_invalidated: Cell::new(false)
+            })
+        }
+    }
+
     pub fn verify(&self) {
         unsafe {
             LLVMVerifyModule(
@@ -145,7 +155,11 @@ pub struct ExecutionEngine {
 }
 
 impl ExecutionEngine {
-    pub fn new(mut m: Module) -> ExecutionEngine {
+    pub fn new(m: Module) -> ExecutionEngine {
+        Self::with_opt_level(m, 1)
+    }
+
+    pub fn with_opt_level(mut m: Module, opt_level: usize) -> ExecutionEngine {
         // Ensure that LLVM JIT has been initialized
         assert_eq!(*LLVM_EXEC, true);
 
@@ -170,7 +184,7 @@ impl ExecutionEngine {
                 &mut mcjit_opts,
                 ::std::mem::size_of::<LLVMMCJITCompilerOptions>() as _
             );
-            mcjit_opts.OptLevel = 1;
+            mcjit_opts.OptLevel = opt_level as _;
 
             let ret = LLVMCreateMCJITCompilerForModule(
                 &mut ee,
@@ -195,6 +209,16 @@ impl ExecutionEngine {
                 _ref: ee,
                 _module_ref: m._ref
             }
+        }
+    }
+
+    pub fn deep_clone_module(&self) -> Module {
+        Module {
+            inner: Rc::new(ModuleImpl {
+                _context: self._context.clone(),
+                _ref: unsafe { LLVMCloneModule(self._module_ref) },
+                _ref_invalidated: Cell::new(false)
+            })
         }
     }
 

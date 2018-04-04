@@ -1,6 +1,6 @@
 use super::llvm;
 use super::runtime::Runtime;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::os::raw::c_void;
 use super::compiler::Compiler;
@@ -14,8 +14,15 @@ pub struct Ondemand {
 pub enum OndemandFunction {
     Processing,
     Uncompiled(llvm::Module),
-    Compiled(llvm::ExecutionEngine, *const c_void)
+    Compiled(
+        llvm::ExecutionEngine /* original */,
+        Option<llvm::ExecutionEngine> /* optimized */,
+        usize /* exec_count */,
+        *const c_void
+    )
 }
+
+const OPT_THRESHOLD: usize = 50;
 
 impl Ondemand {
     pub fn new(rt: Rc<Runtime>, ctx: llvm::Context, fn_modules: Vec<llvm::Module>) -> Ondemand {
@@ -29,26 +36,49 @@ impl Ondemand {
     }
 
     pub fn get_function_addr(&self, id: usize) -> *const c_void {
-        if let OndemandFunction::Compiled(_, addr) = *self.functions[id].borrow() {
-            return addr;
+        let mut f = self.functions[id].borrow_mut();
+        match *f {
+            OndemandFunction::Compiled(
+                ref mut ee, ref mut optimized,
+                ref mut exec_count, ref mut addr
+            ) => {
+                let ec = *exec_count;
+                if ec < OPT_THRESHOLD || optimized.is_some() {
+                    *exec_count += 1;
+                    *addr
+                } else {
+                    eprintln!("JIT Level II");
+                    let m = ee.deep_clone_module();
+                    m.optimize();
+                    let new_ee = llvm::ExecutionEngine::with_opt_level(m, 1);
+                    let new_addr = new_ee.get_function_address("entry").unwrap();
+
+                    *optimized = Some(new_ee);
+                    *addr = new_addr;
+                    *addr
+                }
+            },
+            OndemandFunction::Uncompiled(_) => {
+                if let OndemandFunction::Uncompiled(m) = ::std::mem::replace(
+                    &mut *f,
+                    OndemandFunction::Processing
+                ) {
+                    let ee = llvm::ExecutionEngine::with_opt_level(m, 0);
+                    let addr = ee.get_function_address("entry").unwrap();
+
+                    ::std::mem::replace(&mut *f, OndemandFunction::Compiled(
+                        ee,
+                        None,
+                        0,
+                        addr
+                    ));
+
+                    addr
+                } else {
+                    unreachable!()
+                }
+            },
+            OndemandFunction::Processing => unreachable!()
         }
-
-        let mut f_handle = self.functions[id].borrow_mut();
-        let f = ::std::mem::replace(&mut *f_handle, OndemandFunction::Processing);
-
-        let ee = if let OndemandFunction::Uncompiled(m) = f {
-            m.optimize();
-            llvm::ExecutionEngine::new(m)
-        } else {
-            panic!("Unexpected OndemandFunction state");
-        };
-
-        let addr = ee.get_function_address("entry").unwrap();
-        ::std::mem::replace(&mut *f_handle, OndemandFunction::Compiled(
-            ee,
-            addr
-        ));
-
-        addr
     }
 }
