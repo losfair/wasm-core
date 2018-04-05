@@ -17,7 +17,7 @@ pub struct ValueId(pub usize);
 #[derive(Serialize, Deserialize, Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct BlockId(pub usize);
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq)]
 pub enum Branch {
     Br(BlockId),
     BrEither(ValueId, BlockId, BlockId),
@@ -35,7 +35,8 @@ pub enum Opcode {
 #[derive(Default, Clone, Debug)]
 struct BlockInfo {
     pre: BTreeSet<BlockId>,
-    outgoing_values: Vec<ValueId>
+    outgoing_values: Vec<ValueId>,
+    scan_completed: bool
 }
 
 struct DedupBfs<T: Ord + PartialOrd + Copy> {
@@ -62,6 +63,10 @@ impl<T: Ord + PartialOrd + Copy> DedupBfs<T> {
 
         self.queue.push_front(val);
         self.scanned.insert(val);
+    }
+
+    fn is_scanned(&self, val: &T) -> bool {
+        self.scanned.contains(val)
     }
 }
 
@@ -114,8 +119,17 @@ impl FlowGraph {
                 }
 
                 let mut phi_incoming: Vec<ValueId> = Vec::new();
+
+                let mut is_cycle_begin: bool = false;
+
                 for pre in &blk_info.pre {
                     let pre_info = &block_info[pre.0];
+
+                    // Cycles?
+                    if !pre_info.scan_completed {
+                        is_cycle_begin = true;
+                        break;
+                    }
 
                     if pre_info.outgoing_values.len() == outgoing_values.len() {
                     } else if pre_info.outgoing_values.len() == outgoing_values.len() + 1 {
@@ -125,14 +139,18 @@ impl FlowGraph {
                     }
                 }
 
-                if phi_incoming.len() == 0 {
-                } else if phi_incoming.len() == blk_info.pre.len() {
-                    let new_value = ValueId(value_id_feed.next().unwrap());
-
-                    out.ops.push((Some(new_value), Opcode::Phi(phi_incoming)));
-                    outgoing_values.push(new_value);
+                if is_cycle_begin {
+                    assert_eq!(outgoing_values.len(), 0);
                 } else {
-                    panic!("phi_incoming length mismatch");
+                    if phi_incoming.len() == 0 {
+                    } else if phi_incoming.len() == blk_info.pre.len() {
+                        let new_value = ValueId(value_id_feed.next().unwrap());
+
+                        out.ops.push((Some(new_value), Opcode::Phi(phi_incoming)));
+                        outgoing_values.push(new_value);
+                    } else {
+                        panic!("phi_incoming length mismatch");
+                    }
                 }
             }
 
@@ -190,6 +208,8 @@ impl FlowGraph {
                     Branch::Return(block_info[id].outgoing_values.pop())
                 }
             });
+
+            block_info[id].scan_completed = true;
         }
 
         FlowGraph {
@@ -244,5 +264,30 @@ mod tests {
             Some(ValueId(3)),
             Opcode::Phi(vec! [ ValueId(2), ValueId(1) ])
         ));
+    }
+
+    #[test]
+    fn test_circular_transform() {
+        use ::opcode::Opcode as RawOp;
+        let opcodes = &[
+            RawOp::I32Const(42),
+            RawOp::JmpIf(3),
+            RawOp::Jmp(0),
+            //RawOp::I32Const(2),
+            RawOp::Jmp(0),
+            RawOp::Return
+        ];
+
+        let cfg = ::cfgraph::CFGraph::from_function(opcodes).unwrap();
+        let ssa = FlowGraph::from_cfg(&cfg);
+        println!("{:?}", ssa);
+        assert_eq!(ssa.blocks.len(), 4);
+        assert_eq!(ssa.blocks[1].br, Some(Branch::BrEither(
+            ValueId(0),
+            BlockId(2),
+            BlockId(1)
+        )));
+        assert_eq!(ssa.blocks[2].br, Some(Branch::Br(BlockId(0))));
+        assert_eq!(ssa.blocks[3].br, Some(Branch::Br(BlockId(0))));
     }
 }
