@@ -61,3 +61,4 @@ pub mod resolver;
 pub mod fp_ops;
 pub mod cfgraph;
 pub mod optimizers;
+pub mod ssa;
