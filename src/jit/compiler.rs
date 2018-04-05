@@ -11,7 +11,7 @@ use value::Value;
 use super::compiler_intrinsics::CompilerIntrinsics;
 use super::ondemand::Ondemand;
 
-fn generate_function_name(id: usize) -> String {
+pub fn generate_function_name(id: usize) -> String {
     format!("Wfunc_{}", id)
 }
 
@@ -218,11 +218,11 @@ impl<'a> Compiler<'a> {
     }
 
     pub fn compile(&self) -> OptimizeResult<CompiledModule> {
-        let target_functions: Vec<llvm::Module> = self.source_module.functions.iter().enumerate()
-            .map(|(i, f)| {
-                let target_module = llvm::Module::new(&self._context, "".into());
-                let intrinsics = CompilerIntrinsics::new(&self._context, &target_module, &*self.rt);
+        let target_module = llvm::Module::new(&self._context, "".into());
+        let intrinsics = CompilerIntrinsics::new(&self._context, &target_module, &*self.rt);
 
+        let target_functions: Vec<llvm::Function> = self.source_module.functions.iter().enumerate()
+            .map(|(i, f)| {
                 Self::gen_function_body(
                     &self._context,
                     &*self.rt,
@@ -230,16 +230,17 @@ impl<'a> Compiler<'a> {
                     self.source_module,
                     &target_module,
                     f,
-                    "entry"
-                );
-                target_module
+                    &generate_function_name(i)
+                )
             })
             .collect();
+        drop(target_functions);
+        drop(intrinsics);
 
         self.rt.set_ondemand(Rc::new(Ondemand::new(
             self.rt.clone(),
             self._context.clone(),
-            target_functions
+            target_module
         )));
         Ok(CompiledModule {
             rt: self.rt.clone(),

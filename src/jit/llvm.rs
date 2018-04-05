@@ -116,9 +116,25 @@ impl Module {
         }
     }
 
-    pub fn optimize(&self) {
-        self.verify();
+    pub fn inline_with_threshold(&self, threshold: usize) {
+        unsafe {
+            let pm = LLVMCreatePassManager();
 
+            {
+                let pmb = LLVMPassManagerBuilderCreate();
+
+                LLVMPassManagerBuilderUseInlinerWithThreshold(pmb, threshold as _);
+                LLVMPassManagerBuilderPopulateModulePassManager(pmb, pm);
+
+                LLVMPassManagerBuilderDispose(pmb);
+            }
+
+            LLVMRunPassManager(pm, self.inner._ref);
+            LLVMDisposePassManager(pm);
+        }
+    }
+
+    pub fn optimize(&self) {
         unsafe {
             let pm = LLVMCreatePassManager();
 
@@ -126,7 +142,6 @@ impl Module {
                 let pmb = LLVMPassManagerBuilderCreate();
 
                 LLVMPassManagerBuilderSetOptLevel(pmb, 1);
-                LLVMPassManagerBuilderUseInlinerWithThreshold(pmb, 120);
                 LLVMPassManagerBuilderPopulateModulePassManager(pmb, pm);
 
                 LLVMPassManagerBuilderDispose(pmb);
@@ -258,7 +273,12 @@ impl Drop for ExecutionEngine {
     }
 }
 
+#[derive(Clone)]
 pub struct Orc {
+    inner: Rc<OrcInner>
+}
+
+pub struct OrcInner {
     _ref: LLVMOrcJITStackRef
 }
 
@@ -301,15 +321,70 @@ impl Orc {
             assert_eq!(tm_ref.is_null(), false);
 
             Orc {
-                _ref: unsafe {
-                    LLVMOrcCreateInstance(tm_ref)
-                }
+                inner: Rc::new(OrcInner {
+                    _ref: unsafe {
+                        LLVMOrcCreateInstance(tm_ref)
+                    }
+                })
             }
+        }
+    }
+
+    pub fn resolve(&self, name: &str) -> *const c_void {
+        unsafe {
+            let mut addr: u64 = 0;
+            let name = CString::new(name).unwrap();
+            let code = LLVMOrcGetSymbolAddress(self.inner._ref, &mut addr, name.as_ptr());
+            assert_eq!(code, LLVMOrcErrorCode::LLVMOrcErrSuccess);
+
+            addr as usize as _
+        }
+    }
+
+    extern "C" fn sym_resolve(name: *const c_char, ctx: *mut c_void) -> u64 {
+        let inner: *const OrcInner = ctx as _;
+        unsafe {
+            let mut addr: u64 = 0;
+            let code = LLVMOrcGetSymbolAddress((*inner)._ref, &mut addr, name);
+            assert_eq!(code, LLVMOrcErrorCode::LLVMOrcErrSuccess);
+
+            addr
+        }
+    }
+
+    pub fn add_lazily_compiled_ir(
+        &self,
+        m: Module
+    ) {
+        let m = Rc::try_unwrap(m.inner).unwrap_or_else(|_| {
+            panic!("Attempting to create an execution engine from a module while there are still some strong references to it");
+        });
+
+        unsafe {
+            LLVMVerifyModule(
+                m._ref,
+                LLVMVerifierFailureAction::LLVMAbortProcessAction,
+                ::std::ptr::null_mut()
+            );
+        }
+
+        m._ref_invalidated.set(true);
+
+        unsafe {
+            let mut module_handle: LLVMOrcModuleHandle = ::std::mem::uninitialized();
+            let code = LLVMOrcAddLazilyCompiledIR(
+                self.inner._ref,
+                &mut module_handle,
+                LLVMOrcMakeSharedModule(m._ref),
+                ::std::mem::transmute(Self::sym_resolve as usize),
+                &*self.inner as *const OrcInner as *const c_void as *mut c_void as _
+            );
+            assert_eq!(code, LLVMOrcErrorCode::LLVMOrcErrSuccess);
         }
     }
 }
 
-impl Drop for Orc {
+impl Drop for OrcInner {
     fn drop(&mut self) {
         let code = unsafe {
             LLVMOrcDisposeInstance(self._ref)

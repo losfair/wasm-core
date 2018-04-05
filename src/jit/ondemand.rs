@@ -3,82 +3,49 @@ use super::runtime::Runtime;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::os::raw::c_void;
+use super::compiler;
 use super::compiler::Compiler;
 
 pub struct Ondemand {
     rt: Rc<Runtime>,
     context: llvm::Context,
-    functions: Vec<RefCell<OndemandFunction>>
-}
-
-pub enum OndemandFunction {
-    Processing,
-    Uncompiled(llvm::Module),
-    Compiled(
-        llvm::ExecutionEngine /* original */,
-        Option<llvm::ExecutionEngine> /* optimized */,
-        usize /* exec_count */,
-        *const c_void
-    )
+    orc: llvm::Orc,
+    functions: Vec<RefCell<Option<*const c_void>>>
 }
 
 const OPT_THRESHOLD: usize = 50;
 
 impl Ondemand {
-    pub fn new(rt: Rc<Runtime>, ctx: llvm::Context, fn_modules: Vec<llvm::Module>) -> Ondemand {
+    pub fn new(rt: Rc<Runtime>, ctx: llvm::Context, m: llvm::Module) -> Ondemand {
+        let orc = llvm::Orc::new();
+
+        m.inline_with_threshold(100);
+        m.optimize();
+
+        orc.add_lazily_compiled_ir(m);
+
+        let functions: Vec<RefCell<Option<*const c_void>>> = (0..rt.source_module.functions.len())
+            .map(|_| RefCell::new(None))
+            .collect();
+
         Ondemand {
             rt: rt,
             context: ctx,
-            functions: fn_modules.into_iter()
-                .map(|f| RefCell::new(OndemandFunction::Uncompiled(f)))
-                .collect()
+            orc: orc,
+            functions: functions
         }
     }
 
     pub fn get_function_addr(&self, id: usize) -> *const c_void {
         let mut f = self.functions[id].borrow_mut();
         match *f {
-            OndemandFunction::Compiled(
-                ref mut ee, ref mut optimized,
-                ref mut exec_count, ref mut addr
-            ) => {
-                let ec = *exec_count;
-                if ec < OPT_THRESHOLD || optimized.is_some() {
-                    *exec_count += 1;
-                    *addr
-                } else {
-                    eprintln!("JIT Level II");
-                    let m = ee.deep_clone_module();
-                    m.optimize();
-                    let new_ee = llvm::ExecutionEngine::with_opt_level(m, 1);
-                    let new_addr = new_ee.get_function_address("entry").unwrap();
-
-                    *optimized = Some(new_ee);
-                    *addr = new_addr;
-                    *addr
-                }
-            },
-            OndemandFunction::Uncompiled(_) => {
-                if let OndemandFunction::Uncompiled(m) = ::std::mem::replace(
-                    &mut *f,
-                    OndemandFunction::Processing
-                ) {
-                    let ee = llvm::ExecutionEngine::with_opt_level(m, 0);
-                    let addr = ee.get_function_address("entry").unwrap();
-
-                    ::std::mem::replace(&mut *f, OndemandFunction::Compiled(
-                        ee,
-                        None,
-                        0,
-                        addr
-                    ));
-
-                    addr
-                } else {
-                    unreachable!()
-                }
-            },
-            OndemandFunction::Processing => unreachable!()
+            Some(v) => v,
+            None => {
+                let name = compiler::generate_function_name(id);
+                let addr = self.orc.resolve(&name);
+                *f = Some(addr);
+                addr
+            }
         }
     }
 }
