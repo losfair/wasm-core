@@ -1,4 +1,5 @@
 use ::prelude::{BTreeSet, VecDeque};
+use module::{Module, Type};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct FlowGraph {
@@ -40,6 +41,9 @@ pub enum Opcode {
     GrowMemory(ValueId),
 
     Unreachable,
+
+    Call(u32, Vec<ValueId>),
+    CallIndirect(u32, ValueId, Vec<ValueId>),
 
     I32Const(i32),
 }
@@ -83,7 +87,7 @@ impl<T: Ord + PartialOrd + Copy> DedupBfs<T> {
 }
 
 impl FlowGraph {
-    pub fn from_cfg(cfg: &::cfgraph::CFGraph) -> FlowGraph {
+    pub fn from_cfg(cfg: &::cfgraph::CFGraph, m: &Module) -> FlowGraph {
         let mut output: Vec<BasicBlock> = vec! [ BasicBlock::default(); cfg.blocks.len() ];
         let mut block_info: Vec<BlockInfo> = vec! [ BlockInfo::default(); cfg.blocks.len() ];
         let mut bfs: DedupBfs<BlockId> = DedupBfs::new();
@@ -230,6 +234,51 @@ impl FlowGraph {
                         out.ops.push((None, Opcode::Unreachable));
                         terminate = true;
                     },
+                    RawOp::Call(funcidx) => {
+                        let f = &m.functions[funcidx as usize];
+                        let Type::Func(ref ty_args, ref ty_ret) = &m.types[f.typeidx as usize];
+
+                        let mut args: Vec<ValueId> = Vec::with_capacity(ty_args.len());
+                        for _ in 0..ty_args.len() {
+                            args.push(outgoing.pop().unwrap());
+                        }
+                        args.reverse();
+
+                        out.ops.push((
+                            match ty_ret.len() {
+                                0 => None,
+                                _ => {
+                                    let val_id = ValueId(value_id_feed.next().unwrap());
+                                    outgoing.push(val_id);
+                                    Some(val_id)
+                                }
+                            },
+                            Opcode::Call(funcidx, args)
+                        ));
+                    },
+                    RawOp::CallIndirect(typeidx) => {
+                        let Type::Func(ref ty_args, ref ty_ret) = &m.types[typeidx as usize];
+
+                        let fn_index = outgoing.pop().unwrap();
+
+                        let mut args: Vec<ValueId> = Vec::with_capacity(ty_args.len());
+                        for _ in 0..ty_args.len() {
+                            args.push(outgoing.pop().unwrap());
+                        }
+                        args.reverse();
+
+                        out.ops.push((
+                            match ty_ret.len() {
+                                0 => None,
+                                _ => {
+                                    let val_id = ValueId(value_id_feed.next().unwrap());
+                                    outgoing.push(val_id);
+                                    Some(val_id)
+                                }
+                            },
+                            Opcode::CallIndirect(typeidx, fn_index, args)
+                        ));
+                    },
                     RawOp::I32Const(v) => {
                         let val_id = ValueId(value_id_feed.next().unwrap());
                         outgoing.push(val_id);
@@ -350,7 +399,7 @@ mod tests {
         ];
 
         let cfg = ::cfgraph::CFGraph::from_function(opcodes).unwrap();
-        let ssa = FlowGraph::from_cfg(&cfg);
+        let ssa = FlowGraph::from_cfg(&cfg, &Module::default());
         println!("{:?}", ssa);
         assert_eq!(ssa.blocks.len(), 4);
         assert_eq!(ssa.blocks[3].ops[0], (
@@ -372,7 +421,7 @@ mod tests {
         ];
 
         let cfg = ::cfgraph::CFGraph::from_function(opcodes).unwrap();
-        let ssa = FlowGraph::from_cfg(&cfg);
+        let ssa = FlowGraph::from_cfg(&cfg, &Module::default());
         println!("{:?}", ssa);
         assert_eq!(ssa.blocks.len(), 4);
         assert_eq!(ssa.blocks[0].br, Some(Branch::BrEither(
@@ -382,5 +431,68 @@ mod tests {
         )));
         assert_eq!(ssa.blocks[1].br, Some(Branch::Br(BlockId(0))));
         assert_eq!(ssa.blocks[2].br, Some(Branch::Br(BlockId(0))));
+    }
+
+    #[test]
+    fn test_unreachable() {
+        use ::opcode::Opcode as RawOp;
+        let opcodes = &[
+            RawOp::I32Const(42),
+            RawOp::JmpIf(12),
+            RawOp::Unreachable,
+            RawOp::Drop,
+            RawOp::Drop,
+            RawOp::Drop,
+            RawOp::I32Const(100),
+            RawOp::I32Const(100),
+            RawOp::I32Const(100),
+            RawOp::I32Const(100),
+            RawOp::I32Const(100),
+            RawOp::I32Const(100),
+            RawOp::Return
+        ];
+
+        let cfg = ::cfgraph::CFGraph::from_function(opcodes).unwrap();
+        let ssa = FlowGraph::from_cfg(&cfg, &Module::default());
+        //println!("{:?}", ssa);
+    }
+
+    #[test]
+    fn test_call() {
+        use ::module::{Function, FunctionBody, ValType};
+        use ::opcode::Opcode as RawOp;
+
+        let opcodes = &[
+            RawOp::I32Const(42),
+            RawOp::Call(0),
+            RawOp::Return
+        ];
+
+        let cfg = ::cfgraph::CFGraph::from_function(opcodes).unwrap();
+
+        let mut m = Module::default();
+        m.types.push(Type::Func(vec! [ ValType::I32 ], vec! [ ValType::I32 ]));
+        m.functions.push(Function {
+            name: None,
+            typeidx: 0,
+            locals: vec! [],
+            body: FunctionBody { opcodes: vec! [] }
+        });
+        let ssa = FlowGraph::from_cfg(&cfg, &m);
+        println!("{:?}", ssa);
+
+        assert_eq!(ssa.blocks.len(), 1);
+        assert_eq!(
+            ssa.blocks[0].ops[0],
+            (Some(ValueId(0)), Opcode::I32Const(42))
+        );
+        assert_eq!(
+            ssa.blocks[0].ops[1],
+            (Some(ValueId(1)), Opcode::Call(0, vec! [ ValueId(0) ]))
+        );
+        assert_eq!(
+            ssa.blocks[0].br,
+            Some(Branch::Return(Some(ValueId(1))))
+        );
     }
 }
