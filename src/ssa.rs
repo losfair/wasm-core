@@ -28,8 +28,20 @@ pub enum Branch {
 #[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq)]
 pub enum Opcode {
     Phi(Vec<ValueId>),
+
     Select(ValueId, ValueId, ValueId), // (cond, if_true, if_false)
-    I32Const(i32)
+
+    GetLocal(u32),
+    SetLocal(u32, ValueId),
+    GetGlobal(u32),
+    SetGlobal(u32, ValueId),
+
+    CurrentMemory,
+    GrowMemory(ValueId),
+
+    Unreachable,
+
+    I32Const(i32),
 }
 
 #[derive(Default, Clone, Debug)]
@@ -157,14 +169,79 @@ impl FlowGraph {
             block_info[id].outgoing_values = outgoing_values;
 
             for op in &blk.opcodes {
-                out.ops.push(match *op {
+                let outgoing = &mut block_info[id].outgoing_values;
+                let mut terminate: bool = false;
+
+                match *op {
+                    RawOp::Drop => {
+                        outgoing.pop().unwrap();
+                    },
+                    RawOp::Select => {
+                        let c = outgoing.pop().unwrap();
+                        let val2 = outgoing.pop().unwrap();
+                        let val1 = outgoing.pop().unwrap();
+
+                        let val_id = ValueId(value_id_feed.next().unwrap());
+                        outgoing.push(val_id);
+
+                        out.ops.push((Some(val_id), Opcode::Select(c, val1, val2)));
+                    },
+
+                    RawOp::GetLocal(id) => {
+                        let val_id = ValueId(value_id_feed.next().unwrap());
+                        outgoing.push(val_id);
+
+                        out.ops.push((Some(val_id), Opcode::GetLocal(id)));
+                    },
+                    RawOp::SetLocal(id) => {
+                        let val = outgoing.pop().unwrap();
+                        out.ops.push((None, Opcode::SetLocal(id, val)));
+                    },
+                    RawOp::TeeLocal(id) => {
+                        let val = *outgoing.last().unwrap();
+                        out.ops.push((None, Opcode::SetLocal(id, val)));
+                    },
+                    RawOp::GetGlobal(id) => {
+                        let val_id = ValueId(value_id_feed.next().unwrap());
+                        outgoing.push(val_id);
+
+                        out.ops.push((Some(val_id), Opcode::GetGlobal(id)));
+                    },
+                    RawOp::SetGlobal(id) => {
+                        let val = outgoing.pop().unwrap();
+                        out.ops.push((None, Opcode::SetGlobal(id, val)));
+                    },
+                    RawOp::CurrentMemory => {
+                        let val_id = ValueId(value_id_feed.next().unwrap());
+                        outgoing.push(val_id);
+
+                        out.ops.push((Some(val_id), Opcode::CurrentMemory));
+                    },
+                    RawOp::GrowMemory => {
+                        let val = outgoing.pop().unwrap();
+
+                        let val_id = ValueId(value_id_feed.next().unwrap());
+                        outgoing.push(val_id);
+
+                        out.ops.push((Some(val_id), Opcode::GrowMemory(val)));
+                    },
+                    RawOp::Nop => {},
+                    RawOp::Unreachable => {
+                        out.ops.push((None, Opcode::Unreachable));
+                        terminate = true;
+                    },
                     RawOp::I32Const(v) => {
                         let val_id = ValueId(value_id_feed.next().unwrap());
-                        block_info[id].outgoing_values.push(val_id);
-                        (Some(val_id), Opcode::I32Const(v))
+                        outgoing.push(val_id);
+
+                        out.ops.push((Some(val_id), Opcode::I32Const(v)));
                     },
                     _ => unimplemented!()
-                });
+                }
+
+                if terminate {
+                    break;
+                }
             }
 
             out.br = Some(match *blk.br.as_ref().unwrap() {
@@ -221,6 +298,22 @@ impl FlowGraph {
 fn collect_graph_info(cfg: &::cfgraph::CFGraph, out: &mut [BlockInfo]) {
     for (i, blk) in cfg.blocks.iter().enumerate() {
         use cfgraph::Branch;
+        let mut br_unreachable: bool = false;
+        for op in &blk.opcodes {
+            match *op {
+                ::opcode::Opcode::Unreachable => {
+                    br_unreachable = true;
+                    break;
+                },
+                _ => {}
+            }
+        }
+
+        // The branch will never be executed if the block includes an `unreachable` opcode.
+        if br_unreachable {
+            continue;
+        }
+
         match *blk.br.as_ref().unwrap() {
             Branch::Jmp(::cfgraph::BlockId(id)) => {
                 out[id].pre.insert(BlockId(i));
@@ -282,12 +375,12 @@ mod tests {
         let ssa = FlowGraph::from_cfg(&cfg);
         println!("{:?}", ssa);
         assert_eq!(ssa.blocks.len(), 4);
-        assert_eq!(ssa.blocks[1].br, Some(Branch::BrEither(
+        assert_eq!(ssa.blocks[0].br, Some(Branch::BrEither(
             ValueId(0),
             BlockId(2),
             BlockId(1)
         )));
+        assert_eq!(ssa.blocks[1].br, Some(Branch::Br(BlockId(0))));
         assert_eq!(ssa.blocks[2].br, Some(Branch::Br(BlockId(0))));
-        assert_eq!(ssa.blocks[3].br, Some(Branch::Br(BlockId(0))));
     }
 }
