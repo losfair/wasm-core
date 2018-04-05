@@ -19,8 +19,8 @@ impl Ondemand {
     pub fn new(rt: Rc<Runtime>, ctx: llvm::Context, m: llvm::Module) -> Ondemand {
         let orc = llvm::Orc::new();
 
-        m.inline_with_threshold(100);
-        m.optimize();
+        //m.inline_with_threshold(100);
+        //m.optimize();
 
         orc.add_lazily_compiled_ir(m);
 
