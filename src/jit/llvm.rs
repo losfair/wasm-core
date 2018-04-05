@@ -4,6 +4,8 @@ use llvm_sys::core::*;
 use llvm_sys::execution_engine::*;
 use llvm_sys::target::*;
 use llvm_sys::analysis::*;
+use llvm_sys::orc::*;
+use llvm_sys::target_machine::*;
 use llvm_sys::transforms::pass_manager_builder::*;
 use llvm_sys::{
     LLVMIntPredicate,
@@ -254,6 +256,74 @@ impl Drop for ExecutionEngine {
             LLVMDisposeExecutionEngine(self._ref);
         }
     }
+}
+
+pub struct Orc {
+    _ref: LLVMOrcJITStackRef
+}
+
+impl Orc {
+    pub fn new() -> Orc {
+        // Ensure that LLVM JIT has been initialized
+        assert_eq!(*LLVM_EXEC, true);
+
+        unsafe {
+            let def_triple = LLVMGetDefaultTargetTriple();
+            let mut err: *mut c_char = ::std::ptr::null_mut();
+
+            let mut target_ref: LLVMTargetRef = ::std::mem::uninitialized();
+            let code = LLVMGetTargetFromTriple(
+                def_triple,
+                &mut target_ref,
+                &mut err
+            );
+            if code != 0 {
+                eprintln!("LLVMGetTargetFromTriple failed");
+                ::std::process::abort();
+            }
+
+            if LLVMTargetHasJIT(target_ref) == 0 {
+                eprintln!("The current platform has no JIT support");
+                ::std::process::abort();
+            }
+
+            let tm_ref = LLVMCreateTargetMachine(
+                target_ref,
+                def_triple,
+                ::std::ptr::null_mut(),
+                ::std::ptr::null_mut(),
+                LLVMCodeGenOptLevel::LLVMCodeGenLevelDefault,
+                LLVMRelocMode::LLVMRelocDefault,
+                LLVMCodeModel::LLVMCodeModelJITDefault
+            );
+            LLVMDisposeMessage(def_triple);
+
+            assert_eq!(tm_ref.is_null(), false);
+
+            Orc {
+                _ref: unsafe {
+                    LLVMOrcCreateInstance(tm_ref)
+                }
+            }
+        }
+    }
+}
+
+impl Drop for Orc {
+    fn drop(&mut self) {
+        let code = unsafe {
+            LLVMOrcDisposeInstance(self._ref)
+        };
+        if code != LLVMOrcErrorCode::LLVMOrcErrSuccess {
+            ::std::process::abort();
+        }
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn test_orc_init() {
+    let _orc = Orc::new();
 }
 
 pub struct Type {
