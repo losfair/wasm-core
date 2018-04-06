@@ -419,6 +419,62 @@ impl<'a> Compiler<'a> {
             }
         };
 
+        let extract_f32 = |
+            builder: &llvm::Builder,
+            v: llvm::LLVMValueRef
+        | -> llvm::LLVMValueRef {
+            unsafe {
+                builder.build_bitcast(
+                    builder.build_cast(
+                        llvm::LLVMOpcode::LLVMTrunc,
+                        v,
+                        llvm::Type::int32(ctx)
+                    ),
+                    llvm::Type::float32(ctx)
+                )
+            }
+        };
+
+        let extract_f64 = |
+            builder: &llvm::Builder,
+            v: llvm::LLVMValueRef
+        | -> llvm::LLVMValueRef {
+            unsafe {
+                builder.build_bitcast(
+                    v,
+                    llvm::Type::float64(ctx)
+                )
+            }
+        };
+
+        let wrap_f32 = |
+            builder: &llvm::Builder,
+            v: llvm::LLVMValueRef
+        | -> llvm::LLVMValueRef {
+            unsafe {
+                builder.build_cast(
+                    llvm::LLVMOpcode::LLVMZExt,
+                    builder.build_bitcast(
+                        v,
+                        llvm::Type::int32(ctx)
+                    ),
+                    llvm::Type::int64(ctx)
+                )
+            }
+        };
+
+        let wrap_f64 = |
+            builder: &llvm::Builder,
+            v: llvm::LLVMValueRef
+        | -> llvm::LLVMValueRef {
+            unsafe {
+                builder.build_bitcast(
+                    v,
+                    llvm::Type::int64(ctx)
+                )
+            }
+        };
+
         let build_i32_unop = |
             builder: &llvm::Builder,
             a: llvm::LLVMValueRef,
@@ -491,146 +547,119 @@ impl<'a> Compiler<'a> {
             }
         };
 
-        /*
         let build_i64_unop = |
             builder: &llvm::Builder,
+            a: llvm::LLVMValueRef,
             op: &Fn(&llvm::Builder, llvm::LLVMValueRef) -> llvm::LLVMValueRef
-        | {
-            unsafe {
-                let v = build_stack_pop(&builder);
-                build_stack_push(
-                    &builder,
-                    builder.build_cast(
-                        llvm::LLVMOpcode::LLVMZExt,
-                        op(builder, v),
-                        llvm::Type::int64(ctx)
-                    )
-                );
-            }
+        | -> llvm::LLVMValueRef {
+            op(builder, a)
         };
 
         let build_i64_binop = |
             builder: &llvm::Builder,
+            a: llvm::LLVMValueRef,
+            b: llvm::LLVMValueRef,
             op: &Fn(&llvm::Builder, llvm::LLVMValueRef, llvm::LLVMValueRef) -> llvm::LLVMValueRef
-        | {
-            unsafe {
-                let b = build_stack_pop(&builder);
-                let a = build_stack_pop(&builder);
-                build_stack_push(
-                    &builder,
-                    op(builder, a, b)
-                );
-            }
+        | -> llvm::LLVMValueRef {
+            op(builder, a, b)
         };
 
         let build_i64_relop = |
             builder: &llvm::Builder,
+            a: llvm::LLVMValueRef,
+            b: llvm::LLVMValueRef,
             op: &Fn(&llvm::Builder, llvm::LLVMValueRef, llvm::LLVMValueRef) -> llvm::LLVMValueRef
-        | {
+        | -> llvm::LLVMValueRef {
             unsafe {
-                let b = build_stack_pop(&builder);
-                let a = build_stack_pop(&builder);
-                build_stack_push(
-                    &builder,
-                    builder.build_cast(
-                        llvm::LLVMOpcode::LLVMZExt,
-                        op(builder, a, b),
-                        llvm::Type::int64(ctx)
-                    )
-                );
+                let v = op(builder, a, b);
+                builder.build_cast(
+                    llvm::LLVMOpcode::LLVMZExt,
+                    v,
+                    llvm::Type::int64(ctx)
+                )
             }
         };
 
         let build_f32_unop = |
             builder: &llvm::Builder,
+            a: llvm::LLVMValueRef,
             op: &Fn(&llvm::Builder, llvm::LLVMValueRef) -> llvm::LLVMValueRef
-        | {
-            unsafe {
-                let v = build_stack_pop_f32(&builder);
-                build_stack_push_f32(
-                    &builder,
-                    op(builder, v)
-                );
-            }
+        | -> llvm::LLVMValueRef {
+            let a = extract_f32(builder, a);
+            let v = op(builder, a);
+            wrap_f32(builder, v)
         };
 
         let build_f32_binop = |
             builder: &llvm::Builder,
+            a: llvm::LLVMValueRef,
+            b: llvm::LLVMValueRef,
             op: &Fn(&llvm::Builder, llvm::LLVMValueRef, llvm::LLVMValueRef) -> llvm::LLVMValueRef
-        | {
-            unsafe {
-                let b = build_stack_pop_f32(&builder);
-                let a = build_stack_pop_f32(&builder);
-                build_stack_push_f32(
-                    &builder,
-                    op(builder, a, b)
-                );
-            }
+        | -> llvm::LLVMValueRef {
+            let a = extract_f32(builder, a);
+            let b = extract_f32(builder, b);
+            let v = op(builder, a, b);
+            wrap_f32(builder, v)
         };
 
         let build_f32_relop = |
             builder: &llvm::Builder,
+            a: llvm::LLVMValueRef,
+            b: llvm::LLVMValueRef,
             op: &Fn(&llvm::Builder, llvm::LLVMValueRef, llvm::LLVMValueRef) -> llvm::LLVMValueRef
-        | {
+        | -> llvm::LLVMValueRef {
             unsafe {
-                let b = build_stack_pop_f32(&builder);
-                let a = build_stack_pop_f32(&builder);
-                build_stack_push(
-                    &builder,
-                    builder.build_cast(
-                        llvm::LLVMOpcode::LLVMZExt,
-                        op(builder, a, b),
-                        llvm::Type::int64(ctx)
-                    )
-                );
+                let a = extract_f32(builder, a);
+                let b = extract_f32(builder, b);
+                let v = op(builder, a, b);
+                builder.build_cast(
+                    llvm::LLVMOpcode::LLVMZExt,
+                    v,
+                    llvm::Type::int64(ctx)
+                )
             }
         };
 
         let build_f64_unop = |
             builder: &llvm::Builder,
+            a: llvm::LLVMValueRef,
             op: &Fn(&llvm::Builder, llvm::LLVMValueRef) -> llvm::LLVMValueRef
-        | {
-            unsafe {
-                let v = build_stack_pop_f64(&builder);
-                build_stack_push_f64(
-                    &builder,
-                    op(builder, v)
-                );
-            }
+        | -> llvm::LLVMValueRef {
+            let a = extract_f64(builder, a);
+            let v = op(builder, a);
+            wrap_f64(builder, v)
         };
 
         let build_f64_binop = |
             builder: &llvm::Builder,
+            a: llvm::LLVMValueRef,
+            b: llvm::LLVMValueRef,
             op: &Fn(&llvm::Builder, llvm::LLVMValueRef, llvm::LLVMValueRef) -> llvm::LLVMValueRef
-        | {
-            unsafe {
-                let b = build_stack_pop_f64(&builder);
-                let a = build_stack_pop_f64(&builder);
-                build_stack_push_f64(
-                    &builder,
-                    op(builder, a, b)
-                );
-            }
+        | -> llvm::LLVMValueRef {
+            let a = extract_f64(builder, a);
+            let b = extract_f64(builder, b);
+            let v = op(builder, a, b);
+            wrap_f64(builder, v)
         };
 
         let build_f64_relop = |
             builder: &llvm::Builder,
+            a: llvm::LLVMValueRef,
+            b: llvm::LLVMValueRef,
             op: &Fn(&llvm::Builder, llvm::LLVMValueRef, llvm::LLVMValueRef) -> llvm::LLVMValueRef
-        | {
+        | -> llvm::LLVMValueRef {
             unsafe {
-                let b = build_stack_pop_f64(&builder);
-                let a = build_stack_pop_f64(&builder);
-                build_stack_push(
-                    &builder,
-                    builder.build_cast(
-                        llvm::LLVMOpcode::LLVMZExt,
-                        op(builder, a, b),
-                        llvm::Type::int64(ctx)
-                    )
-                );
+                let a = extract_f64(builder, a);
+                let b = extract_f64(builder, b);
+                let v = op(builder, a, b);
+                builder.build_cast(
+                    llvm::LLVMOpcode::LLVMZExt,
+                    v,
+                    llvm::Type::int64(ctx)
+                )
             }
         };
-*/
+
         let build_std_zext = |
             builder: &llvm::Builder,
             v: llvm::LLVMValueRef
@@ -1708,7 +1737,7 @@ impl<'a> Compiler<'a> {
                                     )
                                 )
                             );
-                        },/*
+                        },
                         Opcode::I64Const(v) => {
                             let builder = target_bb.builder();
                             let v = builder.build_const_int(
@@ -1716,286 +1745,378 @@ impl<'a> Compiler<'a> {
                                 v as _,
                                 false
                             );
-                            build_stack_push(&builder, v);
+                            ssa_values.insert(ssa_target.unwrap(), v);
                         },
-                        Opcode::I64Popcnt => {
-                            build_i64_unop(
-                                &target_bb.builder(),
-                                &|t, v| t.build_call(
-                                    &intrinsics.popcnt_i64,
-                                    &[
-                                        v
-                                    ]
-                                )
+                        Opcode::I64Popcnt(a) => {
+                            let builder = target_bb.builder();
+                            let a = *ssa_values.get(&a).unwrap();
+                            let v = build_i64_unop(
+                                &builder,
+                                a,
+                                &|t, v| t.build_call(&intrinsics.popcnt_i64, &[v])
                             );
+                            ssa_values.insert(ssa_target.unwrap(), v);
                         },
-                        Opcode::I64Clz => {
-                            build_i64_unop(
-                                &target_bb.builder(),
-                                &|t, v| t.build_call(
-                                    &intrinsics.clz_i64,
-                                    &[
-                                        v,
-                                        t.build_const_int(
-                                            llvm::Type::int1(ctx),
-                                            0,
-                                            false
-                                        )
-                                    ]
-                                )
+                        Opcode::I64Clz(a) => {
+                            let builder = target_bb.builder();
+                            let a = *ssa_values.get(&a).unwrap();
+                            let v = build_i64_unop(
+                                &builder,
+                                a,
+                                &|t, v| t.build_call(&intrinsics.clz_i64, &[
+                                    v,
+                                    t.build_const_int(
+                                        llvm::Type::int1(ctx),
+                                        0,
+                                        false
+                                    )
+                                ])
                             );
+                            ssa_values.insert(ssa_target.unwrap(), v);
                         },
-                        Opcode::I64Ctz => {
-                            build_i64_unop(
-                                &target_bb.builder(),
-                                &|t, v| t.build_call(
-                                    &intrinsics.ctz_i64,
-                                    &[
-                                        v,
-                                        t.build_const_int(
-                                            llvm::Type::int1(ctx),
-                                            0,
-                                            false
-                                        )
-                                    ]
-                                )
+                        Opcode::I64Ctz(a) => {
+                            let builder = target_bb.builder();
+                            let a = *ssa_values.get(&a).unwrap();
+                            let v = build_i64_unop(
+                                &builder,
+                                a,
+                                &|t, v| t.build_call(&intrinsics.ctz_i64, &[
+                                    v,
+                                    t.build_const_int(
+                                        llvm::Type::int1(ctx),
+                                        0,
+                                        false
+                                    )
+                                ])
                             );
+                            ssa_values.insert(ssa_target.unwrap(), v);
                         },
-                        Opcode::I64Add => {
-                            build_i64_binop(
+                        Opcode::I64Add(a, b) => {
+                            let v = build_i64_binop(
                                 &target_bb.builder(),
+                                *ssa_values.get(&a).unwrap(),
+                                *ssa_values.get(&b).unwrap(),
                                 &|t, a, b| t.build_add(a, b)
                             );
+                            ssa_values.insert(ssa_target.unwrap(), v);
                         },
-                        Opcode::I64Sub => {
-                            build_i64_binop(
+                        Opcode::I64Sub(a, b) => {
+                            let v = build_i64_binop(
                                 &target_bb.builder(),
+                                *ssa_values.get(&a).unwrap(),
+                                *ssa_values.get(&b).unwrap(),
                                 &|t, a, b| t.build_sub(a, b)
                             );
+                            ssa_values.insert(ssa_target.unwrap(), v);
                         },
-                        Opcode::I64Mul => {
-                            build_i64_binop(
+                        Opcode::I64Mul(a, b) => {
+                            let v = build_i64_binop(
                                 &target_bb.builder(),
+                                *ssa_values.get(&a).unwrap(),
+                                *ssa_values.get(&b).unwrap(),
                                 &|t, a, b| t.build_mul(a, b)
                             );
+                            ssa_values.insert(ssa_target.unwrap(), v);
                         },
-                        Opcode::I64DivU => {
-                            build_i64_binop(
+                        Opcode::I64DivU(a, b) => {
+                            let v = build_i64_binop(
                                 &target_bb.builder(),
+                                *ssa_values.get(&a).unwrap(),
+                                *ssa_values.get(&b).unwrap(),
                                 &|t, a, b| t.build_udiv(a, b)
                             );
+                            ssa_values.insert(ssa_target.unwrap(), v);
                         },
-                        Opcode::I64DivS => {
-                            build_i64_binop(
+                        Opcode::I64DivS(a, b) => {
+                            let v = build_i64_binop(
                                 &target_bb.builder(),
+                                *ssa_values.get(&a).unwrap(),
+                                *ssa_values.get(&b).unwrap(),
                                 &|t, a, b| t.build_sdiv(a, b)
                             );
+                            ssa_values.insert(ssa_target.unwrap(), v);
                         },
-                        Opcode::I64RemU => {
-                            build_i64_binop(
+                        Opcode::I64RemU(a, b) => {
+                            let v = build_i64_binop(
                                 &target_bb.builder(),
+                                *ssa_values.get(&a).unwrap(),
+                                *ssa_values.get(&b).unwrap(),
                                 &|t, a, b| t.build_urem(a, b)
                             );
+                            ssa_values.insert(ssa_target.unwrap(), v);
                         },
-                        Opcode::I64RemS => {
-                            build_i64_binop(
+                        Opcode::I64RemS(a, b) => {
+                            let v = build_i64_binop(
                                 &target_bb.builder(),
+                                *ssa_values.get(&a).unwrap(),
+                                *ssa_values.get(&b).unwrap(),
                                 &|t, a, b| t.build_srem(a, b)
                             );
+                            ssa_values.insert(ssa_target.unwrap(), v);
                         },
-                        Opcode::I64Shl => {
-                            build_i64_binop(
+                        
+                        Opcode::I64Shl(a, b) => {
+                            let v = build_i64_binop(
                                 &target_bb.builder(),
+                                *ssa_values.get(&a).unwrap(),
+                                *ssa_values.get(&b).unwrap(),
                                 &|t, a, b| t.build_shl(a, b)
                             );
+                            ssa_values.insert(ssa_target.unwrap(), v);
                         },
-                        Opcode::I64ShrU => {
-                            build_i64_binop(
+                        Opcode::I64ShrU(a, b) => {
+                            let v = build_i64_binop(
                                 &target_bb.builder(),
+                                *ssa_values.get(&a).unwrap(),
+                                *ssa_values.get(&b).unwrap(),
                                 &|t, a, b| t.build_lshr(a, b)
                             );
+                            ssa_values.insert(ssa_target.unwrap(), v);
                         },
-                        Opcode::I64ShrS => {
-                            build_i64_binop(
+                        Opcode::I64ShrS(a, b) => {
+                            let v = build_i64_binop(
                                 &target_bb.builder(),
+                                *ssa_values.get(&a).unwrap(),
+                                *ssa_values.get(&b).unwrap(),
                                 &|t, a, b| t.build_ashr(a, b)
                             );
+                            ssa_values.insert(ssa_target.unwrap(), v);
                         },
-                        Opcode::I64And => {
-                            build_i64_binop(
+                        Opcode::I64And(a, b) => {
+                            let v = build_i64_binop(
                                 &target_bb.builder(),
+                                *ssa_values.get(&a).unwrap(),
+                                *ssa_values.get(&b).unwrap(),
                                 &|t, a, b| t.build_and(a, b)
                             );
+                            ssa_values.insert(ssa_target.unwrap(), v);
                         },
-                        Opcode::I64Or => {
-                            build_i64_binop(
+                        Opcode::I64Or(a, b) => {
+                            let v = build_i64_binop(
                                 &target_bb.builder(),
+                                *ssa_values.get(&a).unwrap(),
+                                *ssa_values.get(&b).unwrap(),
                                 &|t, a, b| t.build_or(a, b)
                             );
+                            ssa_values.insert(ssa_target.unwrap(), v);
                         },
-                        Opcode::I64Xor => {
-                            build_i64_binop(
+                        Opcode::I64Xor(a, b) => {
+                            let v = build_i64_binop(
                                 &target_bb.builder(),
+                                *ssa_values.get(&a).unwrap(),
+                                *ssa_values.get(&b).unwrap(),
                                 &|t, a, b| t.build_xor(a, b)
                             );
+                            ssa_values.insert(ssa_target.unwrap(), v);
                         },
-                        Opcode::I64Rotl => {
-                            build_i64_binop(
+                        Opcode::I64Rotl(a, b) => {
+                            let v = build_i64_binop(
                                 &target_bb.builder(),
+                                *ssa_values.get(&a).unwrap(),
+                                *ssa_values.get(&b).unwrap(),
                                 &|t, a, b| t.build_call(
                                     &intrinsics.rotl_i64,
                                     &[a, b]
                                 )
                             );
+                            ssa_values.insert(ssa_target.unwrap(), v);
                         },
-                        Opcode::I64Rotr => {
-                            build_i64_binop(
+                        Opcode::I64Rotr(a, b) => {
+                            let v = build_i64_binop(
                                 &target_bb.builder(),
+                                *ssa_values.get(&a).unwrap(),
+                                *ssa_values.get(&b).unwrap(),
                                 &|t, a, b| t.build_call(
                                     &intrinsics.rotr_i64,
                                     &[a, b]
                                 )
                             );
+                            ssa_values.insert(ssa_target.unwrap(), v);
                         },
-                        Opcode::I64Eqz => {
+                        Opcode::I64Eqz(a) => {
                             let builder = target_bb.builder();
                             let v = builder.build_icmp(
                                 llvm::LLVMIntEQ,
-                                build_stack_pop(&builder),
+                                *ssa_values.get(&a).unwrap(),
                                 builder.build_const_int(
                                     llvm::Type::int64(ctx),
                                     0,
                                     false
                                 )
                             );
-                            build_stack_push_i32(&builder, v);
+                            ssa_values.insert(
+                                ssa_target.unwrap(),
+                                builder.build_cast(
+                                    llvm::LLVMOpcode::LLVMZExt,
+                                    v,
+                                    llvm::Type::int64(ctx)
+                                )
+                            );
                         },
-                        Opcode::I64Eq => {
-                            build_i64_relop(
+                        Opcode::I64Eq(a, b) => {
+                            let v = build_i64_relop(
                                 &target_bb.builder(),
+                                *ssa_values.get(&a).unwrap(),
+                                *ssa_values.get(&b).unwrap(),
                                 &|t, a, b| t.build_icmp(
                                     llvm::LLVMIntEQ,
                                     a,
                                     b
                                 )
                             );
+                            ssa_values.insert(ssa_target.unwrap(), v);
                         },
-                        Opcode::I64Ne => {
-                            build_i64_relop(
+                        Opcode::I64Ne(a, b) => {
+                            let v = build_i64_relop(
                                 &target_bb.builder(),
+                                *ssa_values.get(&a).unwrap(),
+                                *ssa_values.get(&b).unwrap(),
                                 &|t, a, b| t.build_icmp(
                                     llvm::LLVMIntNE,
                                     a,
                                     b
                                 )
                             );
+                            ssa_values.insert(ssa_target.unwrap(), v);
                         },
-                        Opcode::I64LtU => {
-                            build_i64_relop(
+                        Opcode::I64LtU(a, b) => {
+                            let v = build_i64_relop(
                                 &target_bb.builder(),
+                                *ssa_values.get(&a).unwrap(),
+                                *ssa_values.get(&b).unwrap(),
                                 &|t, a, b| t.build_icmp(
                                     llvm::LLVMIntULT,
                                     a,
                                     b
                                 )
                             );
+                            ssa_values.insert(ssa_target.unwrap(), v);
                         },
-                        Opcode::I64LtS => {
-                            build_i64_relop(
+                        Opcode::I64LtS(a, b) => {
+                            let v = build_i64_relop(
                                 &target_bb.builder(),
+                                *ssa_values.get(&a).unwrap(),
+                                *ssa_values.get(&b).unwrap(),
                                 &|t, a, b| t.build_icmp(
                                     llvm::LLVMIntSLT,
                                     a,
                                     b
                                 )
                             );
+                            ssa_values.insert(ssa_target.unwrap(), v);
                         },
-                        Opcode::I64LeU => {
-                            build_i64_relop(
+                        Opcode::I64LeU(a, b) => {
+                            let v = build_i64_relop(
                                 &target_bb.builder(),
+                                *ssa_values.get(&a).unwrap(),
+                                *ssa_values.get(&b).unwrap(),
                                 &|t, a, b| t.build_icmp(
                                     llvm::LLVMIntULE,
                                     a,
                                     b
                                 )
                             );
+                            ssa_values.insert(ssa_target.unwrap(), v);
                         },
-                        Opcode::I64LeS => {
-                            build_i64_relop(
+                        Opcode::I64LeS(a, b) => {
+                            let v = build_i64_relop(
                                 &target_bb.builder(),
+                                *ssa_values.get(&a).unwrap(),
+                                *ssa_values.get(&b).unwrap(),
                                 &|t, a, b| t.build_icmp(
                                     llvm::LLVMIntSLE,
                                     a,
                                     b
                                 )
                             );
+                            ssa_values.insert(ssa_target.unwrap(), v);
                         },
-                        Opcode::I64GtU => {
-                            build_i64_relop(
+                        Opcode::I64GtU(a, b) => {
+                            let v = build_i64_relop(
                                 &target_bb.builder(),
+                                *ssa_values.get(&a).unwrap(),
+                                *ssa_values.get(&b).unwrap(),
                                 &|t, a, b| t.build_icmp(
                                     llvm::LLVMIntUGT,
                                     a,
                                     b
                                 )
                             );
+                            ssa_values.insert(ssa_target.unwrap(), v);
                         },
-                        Opcode::I64GtS => {
-                            build_i64_relop(
+                        Opcode::I64GtS(a, b) => {
+                            let v = build_i64_relop(
                                 &target_bb.builder(),
+                                *ssa_values.get(&a).unwrap(),
+                                *ssa_values.get(&b).unwrap(),
                                 &|t, a, b| t.build_icmp(
                                     llvm::LLVMIntSGT,
                                     a,
                                     b
                                 )
                             );
+                            ssa_values.insert(ssa_target.unwrap(), v);
                         },
-                        Opcode::I64GeU => {
-                            build_i64_relop(
+                        Opcode::I64GeU(a, b) => {
+                            let v = build_i64_relop(
                                 &target_bb.builder(),
+                                *ssa_values.get(&a).unwrap(),
+                                *ssa_values.get(&b).unwrap(),
                                 &|t, a, b| t.build_icmp(
                                     llvm::LLVMIntUGE,
                                     a,
                                     b
                                 )
                             );
+                            ssa_values.insert(ssa_target.unwrap(), v);
                         },
-                        Opcode::I64GeS => {
-                            build_i64_relop(
+                        Opcode::I64GeS(a, b) => {
+                            let v = build_i64_relop(
                                 &target_bb.builder(),
+                                *ssa_values.get(&a).unwrap(),
+                                *ssa_values.get(&b).unwrap(),
                                 &|t, a, b| t.build_icmp(
                                     llvm::LLVMIntSGE,
                                     a,
                                     b
                                 )
                             );
+                            ssa_values.insert(ssa_target.unwrap(), v);
                         },
-                        Opcode::I64ExtendI32U => {
+                        Opcode::I64ExtendI32U(a) => {
                             let builder = target_bb.builder();
-                            build_stack_push(
-                                &builder,
+                            let a = *ssa_values.get(&a).unwrap();
+                            let v = builder.build_cast(
+                                llvm::LLVMOpcode::LLVMZExt,
                                 builder.build_cast(
-                                    llvm::LLVMOpcode::LLVMZExt,
-                                    build_stack_pop_i32(&builder),
-                                    llvm::Type::int64(ctx)
-                                )
+                                    llvm::LLVMOpcode::LLVMTrunc,
+                                    a,
+                                    llvm::Type::int32(ctx)
+                                ),
+                                llvm::Type::int64(ctx)
                             );
+                            ssa_values.insert(ssa_target.unwrap(), v);
                         },
-                        Opcode::I64ExtendI32S => {
+                        Opcode::I64ExtendI32S(a) => {
                             let builder = target_bb.builder();
-                            build_stack_push(
-                                &builder,
+                            let a = *ssa_values.get(&a).unwrap();
+                            let v = builder.build_cast(
+                                llvm::LLVMOpcode::LLVMSExt,
                                 builder.build_cast(
-                                    llvm::LLVMOpcode::LLVMSExt,
-                                    build_stack_pop_i32(&builder),
-                                    llvm::Type::int64(ctx)
-                                )
+                                    llvm::LLVMOpcode::LLVMTrunc,
+                                    a,
+                                    llvm::Type::int32(ctx)
+                                ),
+                                llvm::Type::int64(ctx)
                             );
+                            ssa_values.insert(ssa_target.unwrap(), v);
                         },
-                        Opcode::I64Load(ref m) => {
+                        Opcode::I64Load(m, addr) => {
                             let builder = target_bb.builder();
-                            let addr = build_stack_pop(&builder);
-                            build_stack_push(&builder, build_std_load(
+
+                            let addr = *ssa_values.get(&addr).unwrap();
+
+                            let v = build_std_load(
                                 &builder,
                                 8,
                                 false, // signed
@@ -2007,12 +2128,15 @@ impl<'a> Compiler<'a> {
                                         false
                                     )
                                 )
-                            ));
+                            );
+                            ssa_values.insert(ssa_target.unwrap(), v);
                         },
-                        Opcode::I64Load8U(ref m) => {
+                        Opcode::I64Load8U(m, addr) => {
                             let builder = target_bb.builder();
-                            let addr = build_stack_pop(&builder);
-                            build_stack_push(&builder, build_std_load(
+
+                            let addr = *ssa_values.get(&addr).unwrap();
+
+                            let v = build_std_load(
                                 &builder,
                                 1,
                                 false, // signed
@@ -2024,12 +2148,15 @@ impl<'a> Compiler<'a> {
                                         false
                                     )
                                 )
-                            ));
+                            );
+                            ssa_values.insert(ssa_target.unwrap(), v);
                         },
-                        Opcode::I64Load8S(ref m) => {
+                        Opcode::I64Load8S(m, addr) => {
                             let builder = target_bb.builder();
-                            let addr = build_stack_pop(&builder);
-                            build_stack_push(&builder, build_std_load(
+
+                            let addr = *ssa_values.get(&addr).unwrap();
+
+                            let v = build_std_load(
                                 &builder,
                                 1,
                                 true, // signed
@@ -2041,12 +2168,15 @@ impl<'a> Compiler<'a> {
                                         false
                                     )
                                 )
-                            ));
+                            );
+                            ssa_values.insert(ssa_target.unwrap(), v);
                         },
-                        Opcode::I64Load16U(ref m) => {
+                        Opcode::I64Load16U(m, addr) => {
                             let builder = target_bb.builder();
-                            let addr = build_stack_pop(&builder);
-                            build_stack_push(&builder, build_std_load(
+
+                            let addr = *ssa_values.get(&addr).unwrap();
+
+                            let v = build_std_load(
                                 &builder,
                                 2,
                                 false, // signed
@@ -2058,12 +2188,15 @@ impl<'a> Compiler<'a> {
                                         false
                                     )
                                 )
-                            ));
+                            );
+                            ssa_values.insert(ssa_target.unwrap(), v);
                         },
-                        Opcode::I64Load16S(ref m) => {
+                        Opcode::I64Load16S(m, addr) => {
                             let builder = target_bb.builder();
-                            let addr = build_stack_pop(&builder);
-                            build_stack_push(&builder, build_std_load(
+
+                            let addr = *ssa_values.get(&addr).unwrap();
+
+                            let v = build_std_load(
                                 &builder,
                                 2,
                                 true, // signed
@@ -2075,12 +2208,15 @@ impl<'a> Compiler<'a> {
                                         false
                                     )
                                 )
-                            ));
+                            );
+                            ssa_values.insert(ssa_target.unwrap(), v);
                         },
-                        Opcode::I64Load32U(ref m) => {
+                        Opcode::I64Load32U(m, addr) => {
                             let builder = target_bb.builder();
-                            let addr = build_stack_pop(&builder);
-                            build_stack_push(&builder, build_std_load(
+
+                            let addr = *ssa_values.get(&addr).unwrap();
+
+                            let v = build_std_load(
                                 &builder,
                                 4,
                                 false, // signed
@@ -2092,12 +2228,15 @@ impl<'a> Compiler<'a> {
                                         false
                                     )
                                 )
-                            ));
+                            );
+                            ssa_values.insert(ssa_target.unwrap(), v);
                         },
-                        Opcode::I64Load32S(ref m) => {
+                        Opcode::I64Load32S(m, addr) => {
                             let builder = target_bb.builder();
-                            let addr = build_stack_pop(&builder);
-                            build_stack_push(&builder, build_std_load(
+
+                            let addr = *ssa_values.get(&addr).unwrap();
+
+                            let v = build_std_load(
                                 &builder,
                                 4,
                                 true, // signed
@@ -2109,12 +2248,15 @@ impl<'a> Compiler<'a> {
                                         false
                                     )
                                 )
-                            ));
+                            );
+                            ssa_values.insert(ssa_target.unwrap(), v);
                         },
-                        Opcode::I64Store(ref m) => {
+                        Opcode::I64Store(m, addr, val) => {
                             let builder = target_bb.builder();
-                            let val = build_stack_pop(&builder);
-                            let addr = build_stack_pop(&builder);
+
+                            let addr = *ssa_values.get(&addr).unwrap();
+                            let val = *ssa_values.get(&val).unwrap();
+
                             build_std_store(
                                 &builder,
                                 8,
@@ -2129,10 +2271,12 @@ impl<'a> Compiler<'a> {
                                 )
                             );
                         },
-                        Opcode::I64Store8(ref m) => {
+                        Opcode::I64Store8(m, addr, val) => {
                             let builder = target_bb.builder();
-                            let val = build_stack_pop(&builder);
-                            let addr = build_stack_pop(&builder);
+
+                            let addr = *ssa_values.get(&addr).unwrap();
+                            let val = *ssa_values.get(&val).unwrap();
+
                             build_std_store(
                                 &builder,
                                 1,
@@ -2147,10 +2291,12 @@ impl<'a> Compiler<'a> {
                                 )
                             );
                         },
-                        Opcode::I64Store16(ref m) => {
+                        Opcode::I64Store16(m, addr, val) => {
                             let builder = target_bb.builder();
-                            let val = build_stack_pop(&builder);
-                            let addr = build_stack_pop(&builder);
+
+                            let addr = *ssa_values.get(&addr).unwrap();
+                            let val = *ssa_values.get(&val).unwrap();
+
                             build_std_store(
                                 &builder,
                                 2,
@@ -2165,10 +2311,12 @@ impl<'a> Compiler<'a> {
                                 )
                             );
                         },
-                        Opcode::I64Store32(ref m) => {
+                        Opcode::I64Store32(m, addr, val) => {
                             let builder = target_bb.builder();
-                            let val = build_stack_pop(&builder);
-                            let addr = build_stack_pop(&builder);
+
+                            let addr = *ssa_values.get(&addr).unwrap();
+                            let val = *ssa_values.get(&val).unwrap();
+
                             build_std_store(
                                 &builder,
                                 4,
@@ -2185,238 +2333,283 @@ impl<'a> Compiler<'a> {
                         },
                         Opcode::F32Const(v) => {
                             let builder = target_bb.builder();
-                            build_stack_push_i32(
-                                &builder,
+                            let v = builder.build_cast(
+                                llvm::LLVMOpcode::LLVMZExt,
                                 builder.build_const_int(
                                     llvm::Type::int32(ctx),
                                     v as _,
                                     false
-                                )
+                                ),
+                                llvm::Type::int64(ctx)
                             );
+                            ssa_values.insert(ssa_target.unwrap(), v);
                         },
                         Opcode::F64Const(v) => {
                             let builder = target_bb.builder();
-                            build_stack_push(
-                                &builder,
-                                builder.build_const_int(
-                                    llvm::Type::int64(ctx),
-                                    v as _,
-                                    false
-                                )
+                            let v = builder.build_const_int(
+                                llvm::Type::int64(ctx),
+                                v as _,
+                                false
                             );
+                            ssa_values.insert(ssa_target.unwrap(), v);
                         },
-                        Opcode::I32ReinterpretF32 | Opcode::I64ReinterpretF64
-                            | Opcode::F32ReinterpretI32 | Opcode::F64ReinterpretI64 => {
-                                // no-op
+                        Opcode::I32ReinterpretF32(t) => {
+                            let v = *ssa_values.get(&t).unwrap();
+                            ssa_values.insert(ssa_target.unwrap(), v);
                         },
-                        Opcode::I32TruncSF32 => {
+                        Opcode::I64ReinterpretF64(t) => {
+                            let v = *ssa_values.get(&t).unwrap();
+                            ssa_values.insert(ssa_target.unwrap(), v);
+                        },
+                        Opcode::F32ReinterpretI32(t) => {
+                            let v = *ssa_values.get(&t).unwrap();
+                            ssa_values.insert(ssa_target.unwrap(), v);
+                        },
+                        Opcode::F64ReinterpretI64(t) => {
+                            let v = *ssa_values.get(&t).unwrap();
+                            ssa_values.insert(ssa_target.unwrap(), v);
+                        },
+                        Opcode::I32TruncSF32(a) => {
                             let builder = target_bb.builder();
-                            build_stack_push_i32(
-                                &builder,
+
+                            let v = builder.build_cast(
+                                llvm::LLVMOpcode::LLVMFPToSI,
+                                extract_f32(&builder, *ssa_values.get(&a).unwrap()),
+                                llvm::Type::int32(ctx)
+                            );
+                            let v = builder.build_cast(
+                                llvm::LLVMOpcode::LLVMZExt,
+                                v,
+                                llvm::Type::int64(ctx)
+                            );
+                            ssa_values.insert(ssa_target.unwrap(), v);
+                        },
+                        Opcode::I32TruncUF32(a) => {
+                            let builder = target_bb.builder();
+
+                            let v = builder.build_cast(
+                                llvm::LLVMOpcode::LLVMFPToUI,
+                                extract_f32(&builder, *ssa_values.get(&a).unwrap()),
+                                llvm::Type::int32(ctx)
+                            );
+                            let v = builder.build_cast(
+                                llvm::LLVMOpcode::LLVMZExt,
+                                v,
+                                llvm::Type::int64(ctx)
+                            );
+                            ssa_values.insert(ssa_target.unwrap(), v);
+                        },
+                        Opcode::I32TruncSF64(a) => {
+                            let builder = target_bb.builder();
+                            
+                            let v = builder.build_cast(
+                                llvm::LLVMOpcode::LLVMFPToSI,
+                                extract_f64(&builder, *ssa_values.get(&a).unwrap()),
+                                llvm::Type::int32(ctx)
+                            );
+                            let v = builder.build_cast(
+                                llvm::LLVMOpcode::LLVMZExt,
+                                v,
+                                llvm::Type::int64(ctx)
+                            );
+
+                            ssa_values.insert(ssa_target.unwrap(), v);
+                        },
+                        Opcode::I32TruncUF64(a) => {
+                            let builder = target_bb.builder();
+
+                            let v = builder.build_cast(
+                                llvm::LLVMOpcode::LLVMFPToUI,
+                                extract_f64(&builder, *ssa_values.get(&a).unwrap()),
+                                llvm::Type::int32(ctx)
+                            );
+                            let v = builder.build_cast(
+                                llvm::LLVMOpcode::LLVMZExt,
+                                v,
+                                llvm::Type::int64(ctx)
+                            );
+
+                            ssa_values.insert(ssa_target.unwrap(), v);
+                        },
+                        Opcode::I64TruncSF32(a) => {
+                            let builder = target_bb.builder();
+                            
+                            let v = builder.build_cast(
+                                llvm::LLVMOpcode::LLVMFPToSI,
+                                extract_f32(&builder, *ssa_values.get(&a).unwrap()),
+                                llvm::Type::int64(ctx)
+                            );
+
+                            ssa_values.insert(ssa_target.unwrap(), v);
+                        },
+                        Opcode::I64TruncUF32(a) => {
+                            let builder = target_bb.builder();
+                            
+                            let v = builder.build_cast(
+                                llvm::LLVMOpcode::LLVMFPToUI,
+                                extract_f32(&builder, *ssa_values.get(&a).unwrap()),
+                                llvm::Type::int64(ctx)
+                            );
+
+                            ssa_values.insert(ssa_target.unwrap(), v);
+                        },
+                        Opcode::I64TruncSF64(a) => {
+                            let builder = target_bb.builder();
+                            
+                            let v = builder.build_cast(
+                                llvm::LLVMOpcode::LLVMFPToSI,
+                                extract_f64(&builder, *ssa_values.get(&a).unwrap()),
+                                llvm::Type::int64(ctx)
+                            );
+
+                            ssa_values.insert(ssa_target.unwrap(), v);
+                        },
+                        Opcode::I64TruncUF64(a) => {
+                            let builder = target_bb.builder();
+                            
+                            let v = builder.build_cast(
+                                llvm::LLVMOpcode::LLVMFPToUI,
+                                extract_f64(&builder, *ssa_values.get(&a).unwrap()),
+                                llvm::Type::int64(ctx)
+                            );
+
+                            ssa_values.insert(ssa_target.unwrap(), v);
+                        },
+                        Opcode::F32ConvertSI32(a) => {
+                            let builder = target_bb.builder();
+
+                            let v = builder.build_cast(
+                                llvm::LLVMOpcode::LLVMSIToFP,
                                 builder.build_cast(
-                                    llvm::LLVMOpcode::LLVMFPToSI,
-                                    build_stack_pop_f32(&builder),
+                                    llvm::LLVMOpcode::LLVMTrunc,
+                                    *ssa_values.get(&a).unwrap(),
                                     llvm::Type::int32(ctx)
-                                )
+                                ),
+                                llvm::Type::float32(ctx)
                             );
+
+                            ssa_values.insert(ssa_target.unwrap(), wrap_f32(&builder, v));
                         },
-                        Opcode::I32TruncUF32 => {
+                        Opcode::F32ConvertUI32(a) => {
                             let builder = target_bb.builder();
-                            build_stack_push_i32(
-                                &builder,
+
+                            let v = builder.build_cast(
+                                llvm::LLVMOpcode::LLVMUIToFP,
                                 builder.build_cast(
-                                    llvm::LLVMOpcode::LLVMFPToUI,
-                                    build_stack_pop_f32(&builder),
+                                    llvm::LLVMOpcode::LLVMTrunc,
+                                    *ssa_values.get(&a).unwrap(),
                                     llvm::Type::int32(ctx)
-                                )
+                                ),
+                                llvm::Type::float32(ctx)
                             );
+
+                            ssa_values.insert(ssa_target.unwrap(), wrap_f32(&builder, v));
                         },
-                        Opcode::I32TruncSF64 => {
+                        Opcode::F32ConvertSI64(a) => {
                             let builder = target_bb.builder();
-                            build_stack_push_i32(
-                                &builder,
+
+                            let v = builder.build_cast(
+                                llvm::LLVMOpcode::LLVMSIToFP,
+                                *ssa_values.get(&a).unwrap(),
+                                llvm::Type::float32(ctx)
+                            );
+
+                            ssa_values.insert(ssa_target.unwrap(), wrap_f32(&builder, v));
+                        },
+                        Opcode::F32ConvertUI64(a) => {
+                            let builder = target_bb.builder();
+
+                            let v = builder.build_cast(
+                                llvm::LLVMOpcode::LLVMUIToFP,
+                                *ssa_values.get(&a).unwrap(),
+                                llvm::Type::float32(ctx)
+                            );
+
+                            ssa_values.insert(ssa_target.unwrap(), wrap_f32(&builder, v));
+                        },
+                        Opcode::F64ConvertSI32(a) => {
+                            let builder = target_bb.builder();
+
+                            let v = builder.build_cast(
+                                llvm::LLVMOpcode::LLVMSIToFP,
                                 builder.build_cast(
-                                    llvm::LLVMOpcode::LLVMFPToSI,
-                                    build_stack_pop_f64(&builder),
+                                    llvm::LLVMOpcode::LLVMTrunc,
+                                    *ssa_values.get(&a).unwrap(),
                                     llvm::Type::int32(ctx)
-                                )
+                                ),
+                                llvm::Type::float64(ctx)
                             );
+
+                            ssa_values.insert(ssa_target.unwrap(), wrap_f64(&builder, v));
                         },
-                        Opcode::I32TruncUF64 => {
+                        Opcode::F64ConvertUI32(a) => {
                             let builder = target_bb.builder();
-                            build_stack_push_i32(
-                                &builder,
+
+                            let v = builder.build_cast(
+                                llvm::LLVMOpcode::LLVMUIToFP,
                                 builder.build_cast(
-                                    llvm::LLVMOpcode::LLVMFPToUI,
-                                    build_stack_pop_f64(&builder),
+                                    llvm::LLVMOpcode::LLVMTrunc,
+                                    *ssa_values.get(&a).unwrap(),
                                     llvm::Type::int32(ctx)
-                                )
+                                ),
+                                llvm::Type::float64(ctx)
                             );
+
+                            ssa_values.insert(ssa_target.unwrap(), wrap_f64(&builder, v));
                         },
-                        Opcode::I64TruncSF32 => {
+                        Opcode::F64ConvertSI64(a) => {
                             let builder = target_bb.builder();
-                            build_stack_push(
-                                &builder,
-                                builder.build_cast(
-                                    llvm::LLVMOpcode::LLVMFPToSI,
-                                    build_stack_pop_f32(&builder),
-                                    llvm::Type::int64(ctx)
-                                )
+
+                            let v = builder.build_cast(
+                                llvm::LLVMOpcode::LLVMSIToFP,
+                                *ssa_values.get(&a).unwrap(),
+                                llvm::Type::float64(ctx)
                             );
+
+                            ssa_values.insert(ssa_target.unwrap(), wrap_f64(&builder, v));
                         },
-                        Opcode::I64TruncUF32 => {
+                        Opcode::F64ConvertUI64(a) => {
                             let builder = target_bb.builder();
-                            build_stack_push(
-                                &builder,
-                                builder.build_cast(
-                                    llvm::LLVMOpcode::LLVMFPToUI,
-                                    build_stack_pop_f32(&builder),
-                                    llvm::Type::int64(ctx)
-                                )
+
+                            let v = builder.build_cast(
+                                llvm::LLVMOpcode::LLVMUIToFP,
+                                *ssa_values.get(&a).unwrap(),
+                                llvm::Type::float64(ctx)
                             );
+
+                            ssa_values.insert(ssa_target.unwrap(), wrap_f64(&builder, v));
                         },
-                        Opcode::I64TruncSF64 => {
+                        Opcode::F32DemoteF64(a) => {
                             let builder = target_bb.builder();
-                            build_stack_push(
-                                &builder,
-                                builder.build_cast(
-                                    llvm::LLVMOpcode::LLVMFPToSI,
-                                    build_stack_pop_f64(&builder),
-                                    llvm::Type::int64(ctx)
-                                )
+                            let v = builder.build_fp_trunc(
+                                extract_f64(&builder, *ssa_values.get(&a).unwrap()),
+                                llvm::Type::float32(ctx)
                             );
+                            ssa_values.insert(ssa_target.unwrap(), wrap_f32(&builder, v));
                         },
-                        Opcode::I64TruncUF64 => {
+                        Opcode::F64PromoteF32(a) => {
                             let builder = target_bb.builder();
-                            build_stack_push(
-                                &builder,
-                                builder.build_cast(
-                                    llvm::LLVMOpcode::LLVMFPToUI,
-                                    build_stack_pop_f64(&builder),
-                                    llvm::Type::int64(ctx)
-                                )
+                            let v = builder.build_fp_ext(
+                                extract_f32(&builder, *ssa_values.get(&a).unwrap()),
+                                llvm::Type::float64(ctx)
                             );
+                            ssa_values.insert(ssa_target.unwrap(), wrap_f64(&builder, v));
                         },
-                        Opcode::F32ConvertSI32 => {
-                            let builder = target_bb.builder();
-                            build_stack_push_f32(
-                                &builder,
-                                builder.build_cast(
-                                    llvm::LLVMOpcode::LLVMSIToFP,
-                                    build_stack_pop_i32(&builder),
-                                    llvm::Type::float32(ctx)
-                                )
-                            );
-                        },
-                        Opcode::F32ConvertUI32 => {
-                            let builder = target_bb.builder();
-                            build_stack_push_f32(
-                                &builder,
-                                builder.build_cast(
-                                    llvm::LLVMOpcode::LLVMUIToFP,
-                                    build_stack_pop_i32(&builder),
-                                    llvm::Type::float32(ctx)
-                                )
-                            );
-                        },
-                        Opcode::F32ConvertSI64 => {
-                            let builder = target_bb.builder();
-                            build_stack_push_f32(
-                                &builder,
-                                builder.build_cast(
-                                    llvm::LLVMOpcode::LLVMSIToFP,
-                                    build_stack_pop(&builder),
-                                    llvm::Type::float32(ctx)
-                                )
-                            );
-                        },
-                        Opcode::F32ConvertUI64 => {
-                            let builder = target_bb.builder();
-                            build_stack_push_f32(
-                                &builder,
-                                builder.build_cast(
-                                    llvm::LLVMOpcode::LLVMSIToFP,
-                                    build_stack_pop(&builder),
-                                    llvm::Type::float32(ctx)
-                                )
-                            );
-                        },
-                        Opcode::F64ConvertSI32 => {
-                            let builder = target_bb.builder();
-                            build_stack_push_f64(
-                                &builder,
-                                builder.build_cast(
-                                    llvm::LLVMOpcode::LLVMSIToFP,
-                                    build_stack_pop_i32(&builder),
-                                    llvm::Type::float64(ctx)
-                                )
-                            );
-                        },
-                        Opcode::F64ConvertUI32 => {
-                            let builder = target_bb.builder();
-                            build_stack_push_f64(
-                                &builder,
-                                builder.build_cast(
-                                    llvm::LLVMOpcode::LLVMUIToFP,
-                                    build_stack_pop_i32(&builder),
-                                    llvm::Type::float64(ctx)
-                                )
-                            );
-                        },
-                        Opcode::F64ConvertSI64 => {
-                            let builder = target_bb.builder();
-                            build_stack_push_f64(
-                                &builder,
-                                builder.build_cast(
-                                    llvm::LLVMOpcode::LLVMSIToFP,
-                                    build_stack_pop(&builder),
-                                    llvm::Type::float64(ctx)
-                                )
-                            );
-                        },
-                        Opcode::F64ConvertUI64 => {
-                            let builder = target_bb.builder();
-                            build_stack_push_f64(
-                                &builder,
-                                builder.build_cast(
-                                    llvm::LLVMOpcode::LLVMSIToFP,
-                                    build_stack_pop(&builder),
-                                    llvm::Type::float64(ctx)
-                                )
-                            );
-                        },
-                        Opcode::F32DemoteF64 => {
-                            let builder = target_bb.builder();
-                            build_stack_push_f32(
-                                &builder,
-                                builder.build_fp_trunc(
-                                    build_stack_pop_f64(&builder),
-                                    llvm::Type::float32(ctx)
-                                )
-                            );
-                        },
-                        Opcode::F64PromoteF32 => {
-                            let builder = target_bb.builder();
-                            build_stack_push_f64(
-                                &builder,
-                                builder.build_fp_ext(
-                                    build_stack_pop_f32(&builder),
-                                    llvm::Type::float64(ctx)
-                                )
-                            );
-                        },
-                        Opcode::F32Abs => {
-                            build_f32_unop(
+                        Opcode::F32Abs(a) => {
+                            let v = build_f32_unop(
                                 &target_bb.builder(),
+                                *ssa_values.get(&a).unwrap(),
                                 &|t, v| t.build_call(
                                     &intrinsics.fabs_f32,
                                     &[ v ]
                                 )
-                            )
+                            );
+                            ssa_values.insert(ssa_target.unwrap(), v);
                         },
-                        Opcode::F32Neg => {
-                            build_f32_unop(
+                        Opcode::F32Neg(a) => {
+                            let v = build_f32_unop(
                                 &target_bb.builder(),
+                                *ssa_values.get(&a).unwrap(),
                                 &|t, v| t.build_fsub(
                                     t.build_bitcast(
                                         t.build_const_int(
@@ -2429,169 +2622,222 @@ impl<'a> Compiler<'a> {
                                     v
                                 )
                             );
+                            ssa_values.insert(ssa_target.unwrap(), v);
                         },
-                        Opcode::F32Ceil => {
-                            build_f32_unop(
+                        Opcode::F32Ceil(a) => {
+                            let v = build_f32_unop(
                                 &target_bb.builder(),
+                                *ssa_values.get(&a).unwrap(),
                                 &|t, v| t.build_call(
                                     &intrinsics.ceil_f32,
                                     &[ v ]
                                 )
                             );
+                            ssa_values.insert(ssa_target.unwrap(), v);
                         },
-                        Opcode::F32Floor => {
-                            build_f32_unop(
+                        Opcode::F32Floor(a) => {
+                            let v = build_f32_unop(
                                 &target_bb.builder(),
+                                *ssa_values.get(&a).unwrap(),
                                 &|t, v| t.build_call(
                                     &intrinsics.floor_f32,
                                     &[ v ]
                                 )
                             );
+                            ssa_values.insert(ssa_target.unwrap(), v);
                         },
-                        Opcode::F32Trunc => {
-                            build_f32_unop(
+                        Opcode::F32Trunc(a) => {
+                            let v = build_f32_unop(
                                 &target_bb.builder(),
+                                *ssa_values.get(&a).unwrap(),
                                 &|t, v| t.build_call(
                                     &intrinsics.trunc_f32,
                                     &[ v ]
                                 )
                             );
+                            ssa_values.insert(ssa_target.unwrap(), v);
                         },
-                        Opcode::F32Nearest => {
-                            build_f32_unop(
+                        Opcode::F32Nearest(a) => {
+                            let v = build_f32_unop(
                                 &target_bb.builder(),
+                                *ssa_values.get(&a).unwrap(),
                                 &|t, v| t.build_call(
                                     &intrinsics.nearest_f32,
                                     &[ v ]
                                 )
                             );
+                            ssa_values.insert(ssa_target.unwrap(), v);
                         },
-                        Opcode::F32Sqrt => {
-                            build_f32_unop(
+                        Opcode::F32Sqrt(a) => {
+                            let v = build_f32_unop(
                                 &target_bb.builder(),
+                                *ssa_values.get(&a).unwrap(),
                                 &|t, v| t.build_call(
                                     &intrinsics.sqrt_f32,
                                     &[ v ]
                                 )
                             );
+                            ssa_values.insert(ssa_target.unwrap(), v);
                         },
-                        Opcode::F32Add => {
-                            build_f32_binop(
+                        Opcode::F32Add(a, b) => {
+                            let v = build_f32_binop(
                                 &target_bb.builder(),
+                                *ssa_values.get(&a).unwrap(),
+                                *ssa_values.get(&b).unwrap(),
                                 &|t, a, b| t.build_fadd(a, b)
                             );
+                            ssa_values.insert(ssa_target.unwrap(), v);
                         },
-                        Opcode::F32Sub => {
-                            build_f32_binop(
+                        Opcode::F32Sub(a, b) => {
+                            let v = build_f32_binop(
                                 &target_bb.builder(),
+                                *ssa_values.get(&a).unwrap(),
+                                *ssa_values.get(&b).unwrap(),
                                 &|t, a, b| t.build_fsub(a, b)
                             );
+                            ssa_values.insert(ssa_target.unwrap(), v);
                         },
-                        Opcode::F32Mul => {
-                            build_f32_binop(
+                        Opcode::F32Mul(a, b) => {
+                            let v = build_f32_binop(
                                 &target_bb.builder(),
+                                *ssa_values.get(&a).unwrap(),
+                                *ssa_values.get(&b).unwrap(),
                                 &|t, a, b| t.build_fmul(a, b)
                             );
+                            ssa_values.insert(ssa_target.unwrap(), v);
                         },
-                        Opcode::F32Div => {
-                            build_f32_binop(
+                        Opcode::F32Div(a, b) => {
+                            let v = build_f32_binop(
                                 &target_bb.builder(),
+                                *ssa_values.get(&a).unwrap(),
+                                *ssa_values.get(&b).unwrap(),
                                 &|t, a, b| t.build_fdiv(a, b)
                             );
+                            ssa_values.insert(ssa_target.unwrap(), v);
                         },
-                        Opcode::F32Min => {
-                            build_f32_binop(
+                        Opcode::F32Min(a, b) => {
+                            let v = build_f32_binop(
                                 &target_bb.builder(),
+                                *ssa_values.get(&a).unwrap(),
+                                *ssa_values.get(&b).unwrap(),
                                 &|t, a, b| t.build_call(
                                     &intrinsics.minnum_f32,
                                     &[ a, b ]
                                 )
                             );
+                            ssa_values.insert(ssa_target.unwrap(), v);
                         },
-                        Opcode::F32Max => {
-                            build_f32_binop(
+                        Opcode::F32Max(a, b) => {
+                            let v = build_f32_binop(
                                 &target_bb.builder(),
+                                *ssa_values.get(&a).unwrap(),
+                                *ssa_values.get(&b).unwrap(),
                                 &|t, a, b| t.build_call(
                                     &intrinsics.maxnum_f32,
                                     &[ a, b ]
                                 )
                             );
+                            ssa_values.insert(ssa_target.unwrap(), v);
                         },
-                        Opcode::F32Copysign => {
-                            build_f32_binop(
+                        Opcode::F32Copysign(a, b) => {
+                            let v = build_f32_binop(
                                 &target_bb.builder(),
+                                *ssa_values.get(&a).unwrap(),
+                                *ssa_values.get(&b).unwrap(),
                                 &|t, a, b| t.build_call(
                                     &intrinsics.copysign_f32,
                                     &[ a, b ]
                                 )
                             );
+                            ssa_values.insert(ssa_target.unwrap(), v);
                         },
-                        Opcode::F32Eq => {
-                            build_f32_relop(
+                        Opcode::F32Eq(a, b) => {
+                            let v = build_f32_relop(
                                 &target_bb.builder(),
+                                *ssa_values.get(&a).unwrap(),
+                                *ssa_values.get(&b).unwrap(),
                                 &|t, a, b| t.build_fcmp(
                                     llvm::LLVMRealOEQ,
                                     a, b
                                 )
                             );
+                            ssa_values.insert(ssa_target.unwrap(), v);
                         },
-                        Opcode::F32Ne => {
-                            build_f32_relop(
+                        Opcode::F32Ne(a, b) => {
+                            let v = build_f32_relop(
                                 &target_bb.builder(),
+                                *ssa_values.get(&a).unwrap(),
+                                *ssa_values.get(&b).unwrap(),
                                 &|t, a, b| t.build_fcmp(
                                     llvm::LLVMRealONE,
                                     a, b
                                 )
                             );
+                            ssa_values.insert(ssa_target.unwrap(), v);
                         },
-                        Opcode::F32Lt => {
-                            build_f32_relop(
+                        Opcode::F32Lt(a, b) => {
+                            let v = build_f32_relop(
                                 &target_bb.builder(),
+                                *ssa_values.get(&a).unwrap(),
+                                *ssa_values.get(&b).unwrap(),
                                 &|t, a, b| t.build_fcmp(
                                     llvm::LLVMRealOLT,
                                     a, b
                                 )
                             );
+                            ssa_values.insert(ssa_target.unwrap(), v);
                         },
-                        Opcode::F32Gt => {
-                            build_f32_relop(
+                        Opcode::F32Gt(a, b) => {
+                            let v = build_f32_relop(
                                 &target_bb.builder(),
+                                *ssa_values.get(&a).unwrap(),
+                                *ssa_values.get(&b).unwrap(),
                                 &|t, a, b| t.build_fcmp(
                                     llvm::LLVMRealOGT,
                                     a, b
                                 )
                             );
+                            ssa_values.insert(ssa_target.unwrap(), v);
                         },
-                        Opcode::F32Le => {
-                            build_f32_relop(
+                        Opcode::F32Le(a, b) => {
+                            let v = build_f32_relop(
                                 &target_bb.builder(),
+                                *ssa_values.get(&a).unwrap(),
+                                *ssa_values.get(&b).unwrap(),
                                 &|t, a, b| t.build_fcmp(
                                     llvm::LLVMRealOLE,
                                     a, b
                                 )
                             );
+                            ssa_values.insert(ssa_target.unwrap(), v);
                         },
-                        Opcode::F32Ge => {
-                            build_f32_relop(
+                        Opcode::F32Ge(a, b) => {
+                            let v = build_f32_relop(
                                 &target_bb.builder(),
+                                *ssa_values.get(&a).unwrap(),
+                                *ssa_values.get(&b).unwrap(),
                                 &|t, a, b| t.build_fcmp(
                                     llvm::LLVMRealOGE,
                                     a, b
                                 )
                             );
+                            ssa_values.insert(ssa_target.unwrap(), v);
                         },
-                        Opcode::F64Abs => {
-                            build_f64_unop(
+                        Opcode::F64Abs(a) => {
+                            let v = build_f64_unop(
                                 &target_bb.builder(),
+                                *ssa_values.get(&a).unwrap(),
                                 &|t, v| t.build_call(
                                     &intrinsics.fabs_f64,
                                     &[ v ]
                                 )
-                            )
+                            );
+                            ssa_values.insert(ssa_target.unwrap(), v);
                         },
-                        Opcode::F64Neg => {
-                            build_f64_unop(
+                        Opcode::F64Neg(a) => {
+                            let v = build_f64_unop(
                                 &target_bb.builder(),
+                                *ssa_values.get(&a).unwrap(),
                                 &|t, v| t.build_fsub(
                                     t.build_bitcast(
                                         t.build_const_int(
@@ -2604,158 +2850,208 @@ impl<'a> Compiler<'a> {
                                     v
                                 )
                             );
+                            ssa_values.insert(ssa_target.unwrap(), v);
                         },
-                        Opcode::F64Ceil => {
-                            build_f64_unop(
+                        Opcode::F64Ceil(a) => {
+                            let v = build_f64_unop(
                                 &target_bb.builder(),
+                                *ssa_values.get(&a).unwrap(),
                                 &|t, v| t.build_call(
                                     &intrinsics.ceil_f64,
                                     &[ v ]
                                 )
                             );
+                            ssa_values.insert(ssa_target.unwrap(), v);
                         },
-                        Opcode::F64Floor => {
-                            build_f64_unop(
+                        Opcode::F64Floor(a) => {
+                            let v = build_f64_unop(
                                 &target_bb.builder(),
+                                *ssa_values.get(&a).unwrap(),
                                 &|t, v| t.build_call(
                                     &intrinsics.floor_f64,
                                     &[ v ]
                                 )
                             );
+                            ssa_values.insert(ssa_target.unwrap(), v);
                         },
-                        Opcode::F64Trunc => {
-                            build_f64_unop(
+                        Opcode::F64Trunc(a) => {
+                            let v = build_f64_unop(
                                 &target_bb.builder(),
+                                *ssa_values.get(&a).unwrap(),
                                 &|t, v| t.build_call(
                                     &intrinsics.trunc_f64,
                                     &[ v ]
                                 )
                             );
+                            ssa_values.insert(ssa_target.unwrap(), v);
                         },
-                        Opcode::F64Nearest => {
-                            build_f64_unop(
+                        Opcode::F64Nearest(a) => {
+                            let v = build_f64_unop(
                                 &target_bb.builder(),
+                                *ssa_values.get(&a).unwrap(),
                                 &|t, v| t.build_call(
                                     &intrinsics.nearest_f64,
                                     &[ v ]
                                 )
                             );
+                            ssa_values.insert(ssa_target.unwrap(), v);
                         },
-                        Opcode::F64Sqrt => {
-                            build_f64_unop(
+                        Opcode::F64Sqrt(a) => {
+                            let v = build_f64_unop(
                                 &target_bb.builder(),
+                                *ssa_values.get(&a).unwrap(),
                                 &|t, v| t.build_call(
                                     &intrinsics.sqrt_f64,
                                     &[ v ]
                                 )
                             );
+                            ssa_values.insert(ssa_target.unwrap(), v);
                         },
-                        Opcode::F64Add => {
-                            build_f64_binop(
+                        Opcode::F64Add(a, b) => {
+                            let v = build_f64_binop(
                                 &target_bb.builder(),
+                                *ssa_values.get(&a).unwrap(),
+                                *ssa_values.get(&b).unwrap(),
                                 &|t, a, b| t.build_fadd(a, b)
                             );
+                            ssa_values.insert(ssa_target.unwrap(), v);
                         },
-                        Opcode::F64Sub => {
-                            build_f64_binop(
+                        Opcode::F64Sub(a, b) => {
+                            let v = build_f64_binop(
                                 &target_bb.builder(),
+                                *ssa_values.get(&a).unwrap(),
+                                *ssa_values.get(&b).unwrap(),
                                 &|t, a, b| t.build_fsub(a, b)
                             );
+                            ssa_values.insert(ssa_target.unwrap(), v);
                         },
-                        Opcode::F64Mul => {
-                            build_f64_binop(
+                        Opcode::F64Mul(a, b) => {
+                            let v = build_f64_binop(
                                 &target_bb.builder(),
+                                *ssa_values.get(&a).unwrap(),
+                                *ssa_values.get(&b).unwrap(),
                                 &|t, a, b| t.build_fmul(a, b)
                             );
+                            ssa_values.insert(ssa_target.unwrap(), v);
                         },
-                        Opcode::F64Div => {
-                            build_f64_binop(
+                        Opcode::F64Div(a, b) => {
+                            let v = build_f64_binop(
                                 &target_bb.builder(),
+                                *ssa_values.get(&a).unwrap(),
+                                *ssa_values.get(&b).unwrap(),
                                 &|t, a, b| t.build_fdiv(a, b)
                             );
+                            ssa_values.insert(ssa_target.unwrap(), v);
                         },
-                        Opcode::F64Min => {
-                            build_f64_binop(
+                        Opcode::F64Min(a, b) => {
+                            let v = build_f64_binop(
                                 &target_bb.builder(),
+                                *ssa_values.get(&a).unwrap(),
+                                *ssa_values.get(&b).unwrap(),
                                 &|t, a, b| t.build_call(
                                     &intrinsics.minnum_f64,
                                     &[ a, b ]
                                 )
                             );
+                            ssa_values.insert(ssa_target.unwrap(), v);
                         },
-                        Opcode::F64Max => {
-                            build_f64_binop(
+                        Opcode::F64Max(a, b) => {
+                            let v = build_f64_binop(
                                 &target_bb.builder(),
+                                *ssa_values.get(&a).unwrap(),
+                                *ssa_values.get(&b).unwrap(),
                                 &|t, a, b| t.build_call(
                                     &intrinsics.maxnum_f64,
                                     &[ a, b ]
                                 )
                             );
+                            ssa_values.insert(ssa_target.unwrap(), v);
                         },
-                        Opcode::F64Copysign => {
-                            build_f64_binop(
+                        Opcode::F64Copysign(a, b) => {
+                            let v = build_f64_binop(
                                 &target_bb.builder(),
+                                *ssa_values.get(&a).unwrap(),
+                                *ssa_values.get(&b).unwrap(),
                                 &|t, a, b| t.build_call(
                                     &intrinsics.copysign_f64,
                                     &[ a, b ]
                                 )
                             );
+                            ssa_values.insert(ssa_target.unwrap(), v);
                         },
-                        Opcode::F64Eq => {
-                            build_f64_relop(
+                        Opcode::F64Eq(a, b) => {
+                            let v = build_f64_relop(
                                 &target_bb.builder(),
+                                *ssa_values.get(&a).unwrap(),
+                                *ssa_values.get(&b).unwrap(),
                                 &|t, a, b| t.build_fcmp(
                                     llvm::LLVMRealOEQ,
                                     a, b
                                 )
                             );
+                            ssa_values.insert(ssa_target.unwrap(), v);
                         },
-                        Opcode::F64Ne => {
-                            build_f64_relop(
+                        Opcode::F64Ne(a, b) => {
+                            let v = build_f64_relop(
                                 &target_bb.builder(),
+                                *ssa_values.get(&a).unwrap(),
+                                *ssa_values.get(&b).unwrap(),
                                 &|t, a, b| t.build_fcmp(
                                     llvm::LLVMRealONE,
                                     a, b
                                 )
                             );
+                            ssa_values.insert(ssa_target.unwrap(), v);
                         },
-                        Opcode::F64Lt => {
-                            build_f64_relop(
+                        Opcode::F64Lt(a, b) => {
+                            let v = build_f64_relop(
                                 &target_bb.builder(),
+                                *ssa_values.get(&a).unwrap(),
+                                *ssa_values.get(&b).unwrap(),
                                 &|t, a, b| t.build_fcmp(
                                     llvm::LLVMRealOLT,
                                     a, b
                                 )
                             );
+                            ssa_values.insert(ssa_target.unwrap(), v);
                         },
-                        Opcode::F64Gt => {
-                            build_f64_relop(
+                        Opcode::F64Gt(a, b) => {
+                            let v = build_f64_relop(
                                 &target_bb.builder(),
+                                *ssa_values.get(&a).unwrap(),
+                                *ssa_values.get(&b).unwrap(),
                                 &|t, a, b| t.build_fcmp(
                                     llvm::LLVMRealOGT,
                                     a, b
                                 )
                             );
+                            ssa_values.insert(ssa_target.unwrap(), v);
                         },
-                        Opcode::F64Le => {
-                            build_f64_relop(
+                        Opcode::F64Le(a, b) => {
+                            let v = build_f64_relop(
                                 &target_bb.builder(),
+                                *ssa_values.get(&a).unwrap(),
+                                *ssa_values.get(&b).unwrap(),
                                 &|t, a, b| t.build_fcmp(
                                     llvm::LLVMRealOLE,
                                     a, b
                                 )
                             );
+                            ssa_values.insert(ssa_target.unwrap(), v);
                         },
-                        Opcode::F64Ge => {
-                            build_f64_relop(
+                        Opcode::F64Ge(a, b) => {
+                            let v = build_f64_relop(
                                 &target_bb.builder(),
+                                *ssa_values.get(&a).unwrap(),
+                                *ssa_values.get(&b).unwrap(),
                                 &|t, a, b| t.build_fcmp(
                                     llvm::LLVMRealOGE,
                                     a, b
                                 )
                             );
+                            ssa_values.insert(ssa_target.unwrap(), v);
                         },
-                        Opcode::Memcpy | Opcode::NotImplemented(_) => {
+                        Opcode::Memcpy(_, _, _) => {
                             // not implemented
                             eprintln!("Warning: Not implemented: {:?}", op);
                             let builder = target_bb.builder();
@@ -2764,13 +3060,20 @@ impl<'a> Compiler<'a> {
                                 &[]
                             );
                         },
-                        Opcode::Return
-                            | Opcode::Jmp(_)
-                            | Opcode::JmpIf(_)
-                            | Opcode::JmpEither(_, _)
-                            | Opcode::JmpTable(_, _) => unreachable!()
-                        */
-                        _ => panic!("Opcode not implemented: {:?}", op)
+                        Opcode::Phi(ref incoming_values) => {
+                            let builder = target_bb.builder();
+                            let incoming: Vec<(llvm::LLVMValueRef, &llvm::BasicBlock)> = incoming_values.iter()
+                                .map(|id| (
+                                    *ssa_values.get(id).unwrap(),
+                                    &target_basic_blocks[ssa_block_ids.get(id).unwrap().0]
+                                ))
+                                .collect();
+                            let v = builder.build_phi(
+                                &incoming,
+                                llvm::Type::int64(ctx)
+                            );
+                            ssa_values.insert(ssa_target.unwrap(), v);
+                        }
                     }
                 }
             }
@@ -3881,6 +4184,33 @@ mod tests {
             Ok(_) => panic!("Expecting panic"),
             Err(_) => {}
         }
+    }
+
+    #[test]
+    fn test_phi() {
+        let ee = build_ee_from_fn_body(
+            Type::Func(vec! [ ValType::I32 ], vec! [ ValType::I32 ]),
+            vec! [],
+            vec! [
+                Opcode::GetLocal(0), // 0
+                Opcode::I32Const(1), // 1
+                Opcode::I32Eq, // 2
+                Opcode::JmpIf(6), // 3
+                Opcode::I32Const(100), // 4
+                Opcode::Jmp(7), // 5
+                Opcode::I32Const(101), // 6
+                Opcode::Return // 7
+            ]
+        );
+
+        //println!("{}", ee.to_string());
+
+        let f: extern "C" fn (i64) -> i64 = unsafe {
+            ee.get_function_checked(0)
+        };
+        assert_eq!(f(0), 100);
+        assert_eq!(f(1), 101);
+        assert_eq!(f(2), 100);
     }
 
     #[test]

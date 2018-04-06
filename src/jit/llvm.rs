@@ -1064,6 +1064,34 @@ impl<'a> Builder<'a> {
             empty_cstr()
         )
     }
+
+    pub unsafe fn build_phi(
+        &self,
+        incoming: &[(LLVMValueRef, &BasicBlock)],
+        ty: Type
+    ) -> LLVMValueRef {
+        let phi = LLVMBuildPhi(
+            self._ref,
+            ty._ref,
+            empty_cstr()
+        );
+
+        if incoming.len() > 0 {
+            let mut incoming_values: Vec<LLVMValueRef> = incoming.iter()
+                .map(|(v, _)| *v).collect();
+            let mut incoming_blocks: Vec<LLVMBasicBlockRef> = incoming.iter()
+                .map(|(_, bb)| bb._ref).collect();
+
+            LLVMAddIncoming(
+                phi,
+                &mut incoming_values[0],
+                &mut incoming_blocks[0],
+                incoming.len() as _
+            );
+        }
+
+        phi
+    }
 }
 
 impl<'a> Drop for Builder<'a> {
