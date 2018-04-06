@@ -202,7 +202,7 @@ pub enum Opcode {
     NotImplemented(String)
 }
 
-#[derive(Copy, Clone, Debug, Serialize, Deserialize)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
 pub struct Memarg {
     pub offset: u32,
     pub align: u32
