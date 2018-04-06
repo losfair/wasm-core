@@ -1,7 +1,7 @@
 use std::rc::Rc;
 use std::ops::Deref;
 use std::os::raw::c_void;
-use std::collections::BTreeMap;
+use std::collections::{BTreeSet, BTreeMap};
 use optimizers::RemoveDeadBasicBlocks;
 use module::*;
 use cfgraph::*;
@@ -903,6 +903,8 @@ impl<'a> Compiler<'a> {
             .map(|_| llvm::BasicBlock::new(&target_func))
             .collect();
 
+        let mut br_unreachable: BTreeSet<usize> = BTreeSet::new();
+
         for (i, bb) in fg.blocks.iter().enumerate() {
             let target_bb = &target_basic_blocks[i];
 
@@ -1127,6 +1129,7 @@ impl<'a> Compiler<'a> {
                                 &intrinsics.checked_unreachable,
                                 &[]
                             );
+                            br_unreachable.insert(i);
                         },
                         Opcode::GetGlobal(id) => {
                             let id = id as usize;
@@ -3084,6 +3087,13 @@ impl<'a> Compiler<'a> {
 
             let target_bb = &target_basic_blocks[i];
             let builder = target_bb.builder();
+
+            if br_unreachable.contains(&i) {
+                unsafe {
+                    builder.build_unreachable();
+                }
+                continue;
+            }
 
             unsafe {
                 match *bb.br.as_ref().unwrap() {
