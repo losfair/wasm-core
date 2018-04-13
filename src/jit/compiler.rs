@@ -226,10 +226,8 @@ impl<'a> Compiler<'a> {
 
         let target_functions: Vec<llvm::Function> = self.source_module.functions.iter().enumerate()
             .map(|(i, f)| {
-                Self::gen_function_body(
+                Self::gen_function_def(
                     &self._context,
-                    &*self.rt,
-                    &intrinsics,
                     self.source_module,
                     &target_module,
                     f,
@@ -237,6 +235,21 @@ impl<'a> Compiler<'a> {
                 )
             })
             .collect();
+
+        for (sf, tf) in self.source_module.functions.iter().zip(
+            target_functions.iter()
+         ) {
+            Self::gen_function_body(
+                &self._context,
+                &*self.rt,
+                &intrinsics,
+                self.source_module,
+                &target_module,
+                &target_functions,
+                sf,
+                tf
+            );
+        }
         drop(target_functions);
         drop(intrinsics);
 
@@ -251,15 +264,33 @@ impl<'a> Compiler<'a> {
         })
     }
 
+    fn gen_function_def(
+        ctx: &llvm::Context,
+        source_module: &Module,
+        target_module: &llvm::Module,
+        source_func: &Function,
+        target_function_name: &str
+    ) -> llvm::Function {
+        let source_func_ty = &source_module.types[source_func.typeidx as usize];
+
+        llvm::Function::new(
+            ctx,
+            target_module,
+            target_function_name,
+            source_func_ty.to_llvm_function_type(ctx)
+        )
+    }
+
     fn gen_function_body(
         ctx: &llvm::Context,
         rt: &Runtime,
         intrinsics: &CompilerIntrinsics,
         source_module: &Module,
         target_module: &llvm::Module,
+        target_functions: &[llvm::Function],
         source_func: &Function,
-        target_function_name: &str
-    ) -> llvm::Function {
+        target_func: &llvm::Function
+    ) {
         extern "C" fn _grow_memory(rt: &Runtime, len_inc: usize) {
             rt.grow_memory(len_inc);
         }
@@ -270,13 +301,6 @@ impl<'a> Compiler<'a> {
 
         let source_func_ty = &source_module.types[source_func.typeidx as usize];
         let Type::Func(ref source_func_args_ty, ref source_func_ret_ty) = *source_func_ty;
-
-        let target_func = llvm::Function::new(
-            ctx,
-            target_module,
-            target_function_name,
-            source_func_ty.to_llvm_function_type(ctx)
-        );
 
         let mut source_cfg = CFGraph::from_function(&source_func.body.opcodes).unwrap();
         source_cfg.validate().unwrap();
@@ -936,19 +960,8 @@ impl<'a> Compiler<'a> {
                                 .map(|v| *ssa_values.get(v).unwrap())
                                 .collect();
 
-                            let real_addr = build_get_function_addr(
-                                &builder,
-                                builder.build_const_int(
-                                    llvm::Type::int64(ctx),
-                                    id as _,
-                                    false
-                                )
-                            );
-                            let ret = builder.build_call_raw(
-                                builder.build_bitcast(
-                                    real_addr,
-                                    llvm::Type::pointer(ft.to_llvm_function_type(ctx))
-                                ),
+                            let ret = builder.build_call(
+                                &target_functions[id as usize],
                                 &call_args
                             );
 
@@ -3160,8 +3173,6 @@ impl<'a> Compiler<'a> {
                 initializer_bb.builder().build_br(&target_basic_blocks[0]);
             }
         }
-
-        target_func
     }
 }
 
