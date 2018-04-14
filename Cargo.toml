@@ -5,6 +5,8 @@ authors = ["losfair <zhy20000919@hotmail.com>"]
 description = "Portable WebAssembly implementation"
 license = "LGPL-3.0"
 keywords = ["wasm", "webassembly"]
+repository = "https://github.com/losfair/wasm-core"
+readme = "README.md"
 
 [dependencies]
 serde = { version = "1", default-features = false }
