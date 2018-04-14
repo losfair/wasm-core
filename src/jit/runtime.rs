@@ -40,7 +40,7 @@ impl Default for RuntimeConfig {
         RuntimeConfig {
             mem_default: 4096 * 1024,
             mem_max: 16384 * 1024,
-            opt_level: 3
+            opt_level: 0
         }
     }
 }

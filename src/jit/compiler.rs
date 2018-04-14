@@ -253,6 +253,13 @@ impl<'a> Compiler<'a> {
         drop(target_functions);
         drop(intrinsics);
 
+        if self.rt.opt_level > 0 {
+            for _ in 0..2 {
+                target_module.inline_with_threshold(500);
+                target_module.optimize();
+            }
+        }
+
         self.rt.set_ondemand(Rc::new(Ondemand::new(
             self.rt.clone(),
             self._context.clone(),

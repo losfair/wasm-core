@@ -141,7 +141,7 @@ impl Module {
             {
                 let pmb = LLVMPassManagerBuilderCreate();
 
-                LLVMPassManagerBuilderSetOptLevel(pmb, 1);
+                LLVMPassManagerBuilderSetOptLevel(pmb, 2);
                 LLVMPassManagerBuilderPopulateModulePassManager(pmb, pm);
 
                 LLVMPassManagerBuilderDispose(pmb);
