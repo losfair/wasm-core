@@ -445,6 +445,10 @@ impl<'a> Analyzer<'a> {
             .map(|v| *v)
             .collect();
 
+        for pre in &pres {
+            self.analyze_and_generate(*pre);
+        }
+
         let pre_stack_seqs: Vec<&[ValueId]> = pres
             .iter()
             .map(|b| self.block_info[b.0].outgoing_values.as_slice())
@@ -467,20 +471,6 @@ impl<'a> Analyzer<'a> {
             &mut self.basic_blocks[blk_id.0],
             &mut self.block_info[blk_id.0]
         );
-/*
-        for pre in &pres {
-            if self.block_info[pre.0].backedges.contains(blk_id) {
-                continue;
-            }
-            self.analyze_one(*pre);
-        }*/
-
-/*
-        let pre_block_ids = self.block_info[blk_id].pre.clone();
-
-        for pre in pre_block_ids {
-            self.analyze_one(pre);
-        }*/
     }
 
     fn gen_opcodes(
