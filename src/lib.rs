@@ -35,6 +35,9 @@ extern crate llvm_sys;
 #[cfg(feature = "jit")]
 extern crate smallvec;
 
+#[cfg(feature = "std")]
+extern crate libc;
+
 #[cfg(feature = "trans")]
 extern crate parity_wasm;
 
@@ -62,3 +65,4 @@ pub mod fp_ops;
 pub mod cfgraph;
 pub mod optimizers;
 pub mod ssa;
+pub mod platform;

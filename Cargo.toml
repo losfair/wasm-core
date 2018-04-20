@@ -17,10 +17,11 @@ llvm-sys = { version = "60.0", optional = true }
 smallvec = { version = "0.6", optional = true }
 lazy_static = "1.0"
 parity-wasm = { version = "0.27.2", optional = true }
+libc = { version = "0.2", optional = true }
 
 [features]
 default = ["std"]
 std = ["bincode"]
 no_std = ["bincode-no-std"]
-jit = ["std", "llvm-sys", "smallvec"]
+jit = ["std", "llvm-sys", "smallvec", "libc"]
 trans = ["std", "parity-wasm"]
