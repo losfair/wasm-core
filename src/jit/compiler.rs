@@ -4192,6 +4192,25 @@ mod tests {
     }
 
     #[test]
+    fn test_memory_access() {
+        let ee = build_ee_from_fn_body(
+            Type::Func(vec! [ ValType::I32 ], vec! [ ValType::I32 ]),
+            vec! [],
+            vec! [
+                Opcode::GetLocal(0),
+                Opcode::I32Load(Memarg { offset: 0, align: 0 }),
+                Opcode::Return
+            ]
+        );
+
+        let f: extern "C" fn (i64) -> i64 = unsafe {
+            ee.get_function_checked(0)
+        };
+        assert_eq!(catch_unwind(|| f(100)).unwrap(), 0);
+        assert!(catch_unwind(|| f(80000000)).is_err());
+    }
+
+    #[test]
     fn test_unreachable() {
         let ee = build_ee_from_fn_body(
             Type::Func(vec! [ ], vec! [ ]),
