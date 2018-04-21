@@ -32,7 +32,7 @@ pub struct CompiledModule {
 }
 
 pub struct ExecutionContext {
-    rt: Rc<Runtime>,
+    pub rt: Rc<Runtime>,
     source_module: Module
 }
 
@@ -298,9 +298,13 @@ impl<'a> Compiler<'a> {
         source_func: &Function,
         target_func: &llvm::Function
     ) {
+        use platform::generic::MemoryManager;
+
         extern "C" fn _grow_memory(rt: &Runtime, len_inc: usize) {
             rt.grow_memory(len_inc);
         }
+
+        let hints = unsafe { &*rt.mm.get() }.hints();
 
         const STACK_SIZE: usize = 32;
         const TAG_I32: i32 = 0x01;
@@ -717,6 +721,48 @@ impl<'a> Compiler<'a> {
             }
         };
 
+        let build_translate_pointer = |
+            builder: &llvm::Builder,
+            ptr: llvm::LLVMValueRef,
+            trusted_len: usize
+        | -> llvm::LLVMValueRef {
+            unsafe {
+                if !hints.needs_bounds_check && hints.static_start_address.is_some() {
+                    builder.build_cast(
+                        llvm::LLVMOpcode::LLVMIntToPtr,
+                        builder.build_add(
+                            builder.build_const_int(
+                                llvm::Type::int64(ctx),
+                                hints.static_start_address.unwrap() as _,
+                                false
+                            ),
+                            builder.build_and(
+                                ptr,
+                                builder.build_const_int(
+                                    llvm::Type::int64(ctx),
+                                    hints.address_mask as _,
+                                    false
+                                )
+                            )
+                        ),
+                        llvm::Type::pointer(llvm::Type::void(ctx))
+                    )
+                } else {
+                    builder.build_call(
+                        &intrinsics.translate_pointer,
+                        &[
+                            ptr,
+                            builder.build_const_int(
+                                llvm::Type::int64(ctx),
+                                trusted_len as _,
+                                false
+                            )
+                        ]
+                    )
+                }
+            }
+        };
+
         let build_std_load = |
             builder: &llvm::Builder,
             trusted_len: usize,
@@ -724,17 +770,7 @@ impl<'a> Compiler<'a> {
             ptr: llvm::LLVMValueRef
         | -> llvm::LLVMValueRef {
             unsafe {
-                let real_addr = builder.build_call(
-                    &intrinsics.translate_pointer,
-                    &[
-                        ptr,
-                        builder.build_const_int(
-                            llvm::Type::int64(ctx),
-                            trusted_len as _,
-                            false
-                        )
-                    ]
-                );
+                let real_addr = build_translate_pointer(builder, ptr, trusted_len);
                 let build_ext: &Fn(&llvm::Builder, llvm::LLVMValueRef) -> llvm::LLVMValueRef =
                     if signed {
                         &build_std_sext
@@ -795,18 +831,7 @@ impl<'a> Compiler<'a> {
             ptr: llvm::LLVMValueRef
         | {
             unsafe {
-                let real_addr = builder.build_call(
-                    &intrinsics.translate_pointer,
-                    &[
-                        ptr,
-                        builder.build_const_int(
-                            llvm::Type::int64(ctx),
-                            trusted_len as _,
-                            false
-                        )
-                    ]
-                );
-
+                let real_addr = build_translate_pointer(builder, ptr, trusted_len);
                 if trusted_len == 8 {
                     builder.build_store(
                         val,
@@ -4206,8 +4231,9 @@ mod tests {
         let f: extern "C" fn (i64) -> i64 = unsafe {
             ee.get_function_checked(0)
         };
-        assert_eq!(catch_unwind(|| f(100)).unwrap(), 0);
-        assert!(catch_unwind(|| f(80000000)).is_err());
+
+        assert_eq!(catch_unwind(AssertUnwindSafe(|| ee.rt.protected_call(|| f(100)))).unwrap(), 0);
+        assert!(catch_unwind(AssertUnwindSafe(|| ee.rt.protected_call(|| f(80000000)))).is_err());
     }
 
     #[test]

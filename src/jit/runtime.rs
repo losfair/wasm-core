@@ -4,14 +4,15 @@ use std::os::raw::c_void;
 use executor::{NativeResolver, NativeFunction, NativeEntry, NativeFunctionInfo, GlobalStateProvider};
 use module::{Module, Type, ValType};
 use value::Value;
+use platform::current as host;
+use platform::generic::MemoryManager;
 use super::ondemand::Ondemand;
 
 use smallvec::SmallVec;
 
 pub struct Runtime {
     pub(super) opt_level: u32,
-    mem: UnsafeCell<Vec<u8>>,
-    mem_max: usize,
+    pub(super) mm: UnsafeCell<host::NativeMemoryManager>,
     pub source_module: Module,
     function_addrs: UnsafeCell<Option<Vec<*const c_void>>>,
     globals: Box<[i64]>,
@@ -30,8 +31,6 @@ pub struct RuntimeConfig {
 
 #[repr(C)]
 pub struct JitInfo {
-    pub mem_begin: *mut u8,
-    pub mem_len: usize,
     pub global_begin: *mut i64
 }
 
@@ -55,14 +54,6 @@ impl Runtime {
             panic!("mem_default == 0");
         }
 
-        let mut mem_vec: Vec<u8> = vec! [ 0; cfg.mem_default ];
-        for ds in &m.data_segments {
-            let offset = ds.offset as usize;
-            for i in 0..ds.data.len() {
-                mem_vec[offset + i] = ds.data[i];
-            }
-        }
-
         let mut globals: Box<[i64]> = vec! [0; m.globals.len()].into_boxed_slice();
         for (i, g) in m.globals.iter().enumerate() {
             globals[i] = g.value.reinterpret_as_i64();
@@ -79,8 +70,6 @@ impl Runtime {
             .collect();
 
         let jit_info = JitInfo {
-            mem_begin: &mut mem_vec[0],
-            mem_len: mem_vec.len(),
             global_begin: if globals.len() == 0 {
                 ::std::ptr::null_mut()
             } else {
@@ -90,8 +79,10 @@ impl Runtime {
 
         Runtime {
             opt_level: cfg.opt_level,
-            mem: UnsafeCell::new(mem_vec),
-            mem_max: cfg.mem_max,
+            mm: UnsafeCell::new(host::NativeMemoryManager::new(::platform::generic::MemInitOptions {
+                min: cfg.mem_default,
+                max: cfg.mem_max
+            })),
             source_module: m,
             function_addrs: UnsafeCell::new(None),
             globals: globals,
@@ -125,25 +116,21 @@ impl Runtime {
     }
 
     pub fn grow_memory(&self, len_inc: usize) -> usize {
-        unsafe {
-            let mem: &mut Vec<u8> = &mut *self.mem.get();
-            let prev_len = mem.len();
-
-            if mem.len().checked_add(len_inc).unwrap() > self.mem_max {
-                panic!("Memory limit exceeded");
-            }
-            mem.extend((0..len_inc).map(|_| 0));
-
-            let jit_info = &mut *self.jit_info.get();
-            jit_info.mem_begin = &mut mem[0];
-            jit_info.mem_len = mem.len();
-
-            prev_len
-        }
+        let mm = unsafe {
+            &mut *self.mm.get()
+        };
+        let prev_len = mm.len();
+        mm.grow(len_inc);
+        prev_len
     }
 
     pub fn get_jit_info(&self) -> *mut JitInfo {
         self.jit_info.get()
+    }
+
+    pub fn protected_call<T, F: FnOnce() -> T>(&self, f: F) -> T {
+        let mm = unsafe { &mut *self.mm.get() };
+        mm.protected_call(|_| f())
     }
 
     pub(super) unsafe extern "C" fn _jit_native_invoke_request(ret_place: *mut NativeInvokeRequest, n_args: usize) {
@@ -166,7 +153,9 @@ impl Runtime {
         let native_resolver = rt.native_resolver.borrow();
 
         let mut invoke_ctx = JitNativeInvokeContext {
-            mem: &mut *rt.mem.get(),
+            mem: unsafe {
+                &mut *rt.mm.get()
+            }.get_ref_mut(),
             resolver: if let Some(ref v) = *native_resolver {
                 Some(&**v)
             } else {
@@ -215,17 +204,17 @@ impl NativeInvokeRequest {
 }
 
 pub struct JitNativeInvokeContext<'a> {
-    mem: &'a mut Vec<u8>,
+    mem: &'a mut [u8],
     resolver: Option<&'a NativeResolver>
 }
 
 impl<'a> GlobalStateProvider for JitNativeInvokeContext<'a> {
     fn get_memory(&self) -> &[u8] {
-        self.mem.as_slice()
+        self.mem
     }
 
     fn get_memory_mut(&mut self) -> &mut [u8] {
-        self.mem.as_mut_slice()
+        self.mem
     }
 
     fn resolve(&self, module: &str, field: &str) -> Option<NativeEntry> {

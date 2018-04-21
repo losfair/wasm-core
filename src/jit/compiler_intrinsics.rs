@@ -1,5 +1,6 @@
 use super::llvm;
 use super::runtime::Runtime;
+use platform::generic::MemoryManager;
 
 pub struct CompilerIntrinsics {
     pub(super) stacksave: llvm::Function,
@@ -740,6 +741,9 @@ impl CompilerIntrinsics {
         unsafe {
             let builder = initial_bb.builder();
             let jit_info = &mut *rt.get_jit_info();
+            let hints = unsafe { &*rt.mm.get() }.hints();
+
+            let indirect_len_ptr: *const usize = hints.indirect_len_ptr;
 
             let ret = builder.build_cast(
                 llvm::LLVMOpcode::LLVMZExt,
@@ -748,7 +752,7 @@ impl CompilerIntrinsics {
                         llvm::LLVMOpcode::LLVMIntToPtr,
                         builder.build_const_int(
                             llvm::Type::int64(ctx),
-                            (&jit_info.mem_len as *const usize as usize) as u64,
+                            (indirect_len_ptr as usize) as u64,
                             false
                         ),
                         llvm::Type::pointer(llvm::Type::int_native(ctx))
@@ -985,8 +989,9 @@ impl CompilerIntrinsics {
         let jit_info = unsafe {
             &mut *rt.get_jit_info()
         };
-        let mem_begin_ptr = &mut jit_info.mem_begin as *mut *mut u8;
-        let mem_len_ptr = &mut jit_info.mem_len as *mut usize;
+        let hints = unsafe { &*rt.mm.get() }.hints();
+        let mem_begin_ptr: *const *mut u8 = hints.indirect_start_address_ptr;
+        let mem_len_ptr: *const usize = hints.indirect_len_ptr;
 
         let initial_bb = llvm::BasicBlock::new(&f);
         let ok_bb = llvm::BasicBlock::new(&f);

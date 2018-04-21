@@ -16,5 +16,8 @@ pub struct MemInitOptions {
 #[derive(Copy, Clone, Debug)]
 pub struct MemCodegenHints {
     pub needs_bounds_check: bool,
-    pub address_mask: usize
+    pub address_mask: usize,
+    pub indirect_len_ptr: *const usize,
+    pub indirect_start_address_ptr: *const *mut u8,
+    pub static_start_address: Option<*mut u8>
 }

@@ -207,7 +207,10 @@ unsafe impl MemoryManager for NativeMemoryManager {
     fn hints(&self) -> MemCodegenHints {
         MemCodegenHints {
             needs_bounds_check: false,
-            address_mask: self.mapped_len - 1
+            address_mask: self.mapped_len - 1,
+            indirect_len_ptr: &self.mem_len,
+            indirect_start_address_ptr: &self.mem_ptr,
+            static_start_address: Some(self.mem_ptr)
         }
     }
 
