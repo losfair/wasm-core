@@ -77,12 +77,21 @@ impl Runtime {
             }
         };
 
+        let mut mm = host::NativeMemoryManager::new(::platform::generic::MemInitOptions {
+            min: cfg.mem_default,
+            max: cfg.mem_max
+        });
+        {
+            let mem = mm.get_ref_mut();
+            for ds in &m.data_segments {
+                let offset = ds.offset as usize;
+                mem[offset..offset + ds.data.len()].copy_from_slice(&ds.data);
+            }
+        }
+
         Runtime {
             opt_level: cfg.opt_level,
-            mm: UnsafeCell::new(host::NativeMemoryManager::new(::platform::generic::MemInitOptions {
-                min: cfg.mem_default,
-                max: cfg.mem_max
-            })),
+            mm: UnsafeCell::new(mm),
             source_module: m,
             function_addrs: UnsafeCell::new(None),
             globals: globals,

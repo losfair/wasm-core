@@ -4326,4 +4326,38 @@ mod tests {
             let _: extern "C" fn () -> i64 = unsafe { ee.get_function_checked(1) };
         })).unwrap();
     }
+
+    #[test]
+    fn test_data_segment() {
+        let mut m: Module = Module::default();
+        m.data_segments.push(DataSegment {
+            offset: 12,
+            data: vec! [ 42, 81 ]
+        });
+
+        let m = prepare_module_from_fn_bodies(
+            m,
+            vec! [
+                (
+                    Type::Func(vec! [], vec! [ ValType::I32 ]),
+                    vec! [],
+                    vec! [
+                        Opcode::I32Const(4),
+                        Opcode::I32Load8U(Memarg { offset: 8, align: 0 }),
+                        Opcode::I32Const(5),
+                        Opcode::I32Load8U(Memarg { offset: 8, align: 0 }),
+                        Opcode::I32Add,
+                        Opcode::Return
+                    ]
+                )
+            ]
+        );
+        let ee = m.into_execution_context();
+
+        let f: extern "C" fn () -> i64 = unsafe {
+            ee.get_function_checked(0)
+        };
+        let ret = f();
+        assert_eq!(ret, 42 + 81);
+    }
 }
