@@ -20,6 +20,7 @@ lazy_static! {
     };
 
     static ref ENSURE_SIGSEGV_HANDLER: () = {
+        // TODO: Pass control to rust stack overflow checker
         extern "C" fn handle_sigsegv(signo: i32, siginfo: &sigsegv::SigsegvInfo, _: *mut libc::c_void) {
             MEM_FAULT_JMP_BUF.with(|buf| {
                 let jmpbuf_addr: *mut u8 = {
