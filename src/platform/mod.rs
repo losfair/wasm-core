@@ -10,3 +10,7 @@ macro_rules! import_platform {
 }
 
 import_platform!("x86_64", "linux", x86_64_linux);
+
+pub mod other;
+#[cfg(not(all(target_arch = "x86_64", target_os = "linux")))]
+pub use self::other as current;
