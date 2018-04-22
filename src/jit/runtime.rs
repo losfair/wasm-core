@@ -142,6 +142,16 @@ impl Runtime {
         mm.protected_call(|_| f())
     }
 
+    pub fn get_memory(&self) -> *const [u8] {
+        let mm = unsafe { &*self.mm.get() };
+        mm.get_ref()
+    }
+
+    pub fn get_memory_mut(&self) -> *mut [u8] {
+        let mm = unsafe { &mut *self.mm.get() };
+        mm.get_ref_mut()
+    }
+
     pub(super) unsafe extern "C" fn _jit_native_invoke_request(ret_place: *mut NativeInvokeRequest, n_args: usize) {
         ::std::ptr::write(ret_place, NativeInvokeRequest::new(n_args));
     }
