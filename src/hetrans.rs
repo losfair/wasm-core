@@ -537,6 +537,24 @@ fn translate_function(m: &Module, f: &Function, offset_table: &OffsetTable) -> T
             },
             Opcode::F32ReinterpretI32 | Opcode::I32ReinterpretF32
                 | Opcode::F64ReinterpretI64 | Opcode::I64ReinterpretF64 => {},
+            Opcode::NativeInvoke(id) => {
+                let native = &m.natives[id as usize];
+
+                if native.module != "hexagon_e" {
+                    panic!("NativeInvoke with a module other than `hexagon_e` is not supported. Got: {}", native.module);
+                }
+
+                if !native.field.starts_with("syscall_") {
+                    panic!("Invalid NativeInvoke field prefix; Expecting `syscall_`");
+                }
+
+                let ni_id: u32 = native.field.splitn(2, "_").nth(1).unwrap().parse().unwrap_or_else(|_| {
+                    panic!("Unable to parse NativeInvoke id");
+                });
+
+                result.push(TargetOp::NativeInvoke as u8);
+                write_u32(&mut result, ni_id);
+            },
             _ => {
                 eprintln!("Not implemented: {:?}", op);
                 result.push(TargetOp::NotSupported as u8);
