@@ -54,9 +54,9 @@ impl Value {
         unsafe {
             match *self {
                 Value::Undef => 0,
-                Value::I32(v) => ::prelude::mem::transmute(v as u32 as u64),
+                Value::I32(v) => v as u32 as u64 as i64,
                 Value::I64(v) => v,
-                Value::F32(v) => ::prelude::mem::transmute(v as f64),
+                Value::F32(v) => ::prelude::mem::transmute::<f32, u32>(v) as u64 as i64,
                 Value::F64(v) => ::prelude::mem::transmute(v)
             }
         }

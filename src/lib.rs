@@ -35,17 +35,22 @@ extern crate llvm_sys;
 #[cfg(feature = "jit")]
 extern crate smallvec;
 
-#[cfg(feature = "std")]
+#[cfg(feature = "jit")]
 extern crate libc;
 
 #[cfg(feature = "trans")]
 extern crate parity_wasm;
+
+extern crate byteorder;
 
 #[cfg(feature = "trans")]
 pub mod trans;
 
 #[cfg(feature = "jit")]
 pub mod jit;
+
+#[cfg(feature = "jit")]
+pub mod platform;
 
 #[cfg(feature = "std")]
 mod prelude;
@@ -65,4 +70,4 @@ pub mod fp_ops;
 pub mod cfgraph;
 pub mod optimizers;
 pub mod ssa;
-pub mod platform;
+pub mod hetrans;
