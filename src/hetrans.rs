@@ -18,6 +18,11 @@ pub enum TargetOp {
     SetLocal,
     TeeLocal,
 
+    GetSlotIndirect,
+    GetSlot,
+    SetSlot,
+    ResetSlots,
+
     NativeInvoke,
 
     CurrentMemory,
@@ -135,11 +140,8 @@ enum RelocType {
 
 #[derive(Debug)]
 struct OffsetTable {
-    table_offset: usize,
-    globals_offset: usize,
-    mem_offset: usize,
-
-    table_ds_id: usize
+    table_slot_offset: usize,
+    globals_slot_offset: usize
 }
 
 struct TargetFunction {
@@ -151,8 +153,8 @@ struct TargetFunction {
 pub fn translate_module(m: &Module, entry_fn: usize) -> Vec<u8> {
     let mut target_code: Vec<u8> = Vec::new();
 
-    let (target_dss, offset_table) = build_initializers(m);
-    let init_data_relocs = write_initializers(&target_dss, &mut target_code);
+    let (target_dss, slot_values, offset_table) = build_initializers(m);
+    let _init_data_relocs = write_initializers(&target_dss, &mut target_code);
 
     eprintln!("Offsets: {:?}", offset_table);
 
@@ -162,8 +164,22 @@ pub fn translate_module(m: &Module, entry_fn: usize) -> Vec<u8> {
         functions.push(translate_function(&m, f, &offset_table));
     }
 
+    let mut slot_initializer_relocs: Vec<usize> = Vec::with_capacity(functions.len());
     let mut function_relocs: Vec<usize> = Vec::with_capacity(functions.len());
     let mut executable: Vec<u8> = Vec::new();
+
+    executable.push(TargetOp::ResetSlots as u8);
+    write_u32(&mut executable, slot_values.len() as u32);
+
+    for (i, sv) in slot_values.iter().enumerate() {
+        executable.push(TargetOp::I64Const as u8);
+
+        slot_initializer_relocs.push(executable.len());
+        write_u64(&mut executable, *sv as u64);
+
+        executable.push(TargetOp::SetSlot as u8);
+        write_u32(&mut executable, i as u32);
+    }
 
     let mut entry_reloc_point = build_call(m, &mut executable, entry_fn);
     executable.push(TargetOp::Halt as u8);
@@ -196,19 +212,20 @@ pub fn translate_module(m: &Module, entry_fn: usize) -> Vec<u8> {
         }
     }
 
-    target_code.extend_from_slice(&executable);
-
     // Relocate table
-    assert_eq!(target_dss[offset_table.table_ds_id].data.len(), m.tables[0].elements.len() * (4 + 4));
     for i in 0..m.tables[0].elements.len() {
-        let base = init_data_relocs[offset_table.table_ds_id] + i * (4 + 4);
-        let elem = &mut target_code[base .. base + 4];
+        let base = slot_initializer_relocs[offset_table.table_slot_offset + i];
+        let elem = &mut executable[base .. base + 8];
 
+        // On little endian systems this is the lower 32 bits of a 64-bit value.
         let function_id = LittleEndian::read_u32(elem);
         if function_id != ::std::u32::MAX {
+            eprintln!("Relocating: {} -> {}", function_id, function_relocs[function_id as usize]);
             LittleEndian::write_u32(elem, function_relocs[function_id as usize] as u32);
         }
     }
+
+    target_code.extend_from_slice(&executable);
 
     target_code
 }
@@ -258,19 +275,27 @@ fn translate_function(m: &Module, f: &Function, offset_table: &OffsetTable) -> T
                 let Type::Func(ref ty_args, ref ty_rets) = &m.types[target_ty as usize];
 
                 // We've got the index into table at stack top.
-                // [index] * (4 + 4) + table_offset
                 result.push(TargetOp::I32Const as u8);
-                write_u32(&mut result, 4 + 4);
-                result.push(TargetOp::I32Mul as u8);
+                write_u32(&mut result, offset_table.table_slot_offset as u32);
+                result.push(TargetOp::I32Add as u8);
+                result.push(TargetOp::GetSlotIndirect as u8);
+                // (slot_value) now
+
                 result.push(TargetOp::Dup as u8);
+                result.push(TargetOp::I64Const as u8);
+                write_u64(&mut result, 0xffffffffu64);
+                result.push(TargetOp::I64And as u8); // Take the lower 32 bits (target)
+                // (slot_value, target) now
 
-                result.push(TargetOp::I32Load as u8);
-                write_u32(&mut result, offset_table.table_offset as u32); // target
                 result.push(TargetOp::Swap2 as u8);
-                result.push(TargetOp::I32Load as u8);
-                write_u32(&mut result, offset_table.table_offset as u32 + 4); // n_locals
+                result.push(TargetOp::I64Const as u8);
+                write_u64(&mut result, 0xffffffffu64 << 32); // Take the upper 32 bits (n_locals)
+                result.push(TargetOp::I64And as u8);
+                result.push(TargetOp::I64Const as u8);
+                write_u64(&mut result, 32);
+                result.push(TargetOp::I64ShrU as u8);
+                // (target, n_locals) now
 
-                // Now we have (target, n_locals)
                 result.push(TargetOp::Call as u8);
                 write_u32(&mut result, ty_args.len() as u32);
             },
@@ -292,21 +317,12 @@ fn translate_function(m: &Module, f: &Function, offset_table: &OffsetTable) -> T
                 write_u32(&mut result, id);
             },
             Opcode::GetGlobal(id) => {
-                result.push(TargetOp::I32Const as u8);
-                write_u32(&mut result, id * 8);
-                result.push(TargetOp::I64Load as u8);
-                write_u32(&mut result, offset_table.globals_offset as u32);
+                result.push(TargetOp::GetSlot as u8);
+                write_u32(&mut result, offset_table.globals_slot_offset as u32 + id);
             },
             Opcode::SetGlobal(id) => {
-                result.push(TargetOp::I32Const as u8);
-                write_u32(&mut result, id * 8);
-                // (val, addr)
-
-                result.push(TargetOp::Swap2 as u8);
-                // (addr, val)
-
-                result.push(TargetOp::I64Store as u8);
-                write_u32(&mut result, offset_table.globals_offset as u32);
+                result.push(TargetOp::SetSlot as u8);
+                write_u32(&mut result, offset_table.globals_slot_offset as u32 + id);
             },
             Opcode::Jmp(loc) => {
                 result.push(TargetOp::Jmp as u8);
@@ -414,35 +430,35 @@ fn translate_function(m: &Module, f: &Function, offset_table: &OffsetTable) -> T
             Opcode::I32WrapI64 => result.push(TargetOp::I32WrapI64 as u8),
             Opcode::I32Load(Memarg { offset, align }) => {
                 result.push(TargetOp::I32Load as u8);
-                write_u32(&mut result, offset_table.mem_offset as u32 + offset);
+                write_u32(&mut result, offset);
             },
             Opcode::I32Load8U(Memarg { offset, align }) => {
                 result.push(TargetOp::I32Load8U as u8);
-                write_u32(&mut result, offset_table.mem_offset as u32 + offset);
+                write_u32(&mut result, offset);
             },
             Opcode::I32Load8S(Memarg { offset, align }) => {
                 result.push(TargetOp::I32Load8S as u8);
-                write_u32(&mut result, offset_table.mem_offset as u32 + offset);
+                write_u32(&mut result, offset);
             },
             Opcode::I32Load16U(Memarg { offset, align }) => {
                 result.push(TargetOp::I32Load16U as u8);
-                write_u32(&mut result, offset_table.mem_offset as u32 + offset);
+                write_u32(&mut result, offset);
             },
             Opcode::I32Load16S(Memarg { offset, align }) => {
                 result.push(TargetOp::I32Load16S as u8);
-                write_u32(&mut result, offset_table.mem_offset as u32 + offset);
+                write_u32(&mut result, offset);
             },
             Opcode::I32Store(Memarg { offset, align }) => {
                 result.push(TargetOp::I32Store as u8);
-                write_u32(&mut result, offset_table.mem_offset as u32 + offset);
+                write_u32(&mut result, offset);
             },
             Opcode::I32Store8(Memarg { offset, align }) => {
                 result.push(TargetOp::I32Store8 as u8);
-                write_u32(&mut result, offset_table.mem_offset as u32 + offset);
+                write_u32(&mut result, offset);
             },
             Opcode::I32Store16(Memarg { offset, align }) => {
                 result.push(TargetOp::I32Store16 as u8);
-                write_u32(&mut result, offset_table.mem_offset as u32 + offset);
+                write_u32(&mut result, offset);
             },
             Opcode::I64Const(v) => {
                 result.push(TargetOp::I64Const as u8);
@@ -485,47 +501,47 @@ fn translate_function(m: &Module, f: &Function, offset_table: &OffsetTable) -> T
             Opcode::I64ExtendI32S => result.push(TargetOp::I64ExtendI32S as u8),
             Opcode::I64Load(Memarg { offset, align }) => {
                 result.push(TargetOp::I64Load as u8);
-                write_u32(&mut result, offset_table.mem_offset as u32 + offset);
+                write_u32(&mut result, offset);
             },
             Opcode::I64Load8U(Memarg { offset, align }) => {
                 result.push(TargetOp::I64Load8U as u8);
-                write_u32(&mut result, offset_table.mem_offset as u32 + offset);
+                write_u32(&mut result, offset);
             },
             Opcode::I64Load8S(Memarg { offset, align }) => {
                 result.push(TargetOp::I64Load8S as u8);
-                write_u32(&mut result, offset_table.mem_offset as u32 + offset);
+                write_u32(&mut result, offset);
             },
             Opcode::I64Load16U(Memarg { offset, align }) => {
                 result.push(TargetOp::I64Load16U as u8);
-                write_u32(&mut result, offset_table.mem_offset as u32 + offset);
+                write_u32(&mut result, offset);
             },
             Opcode::I64Load16S(Memarg { offset, align }) => {
                 result.push(TargetOp::I64Load16S as u8);
-                write_u32(&mut result, offset_table.mem_offset as u32 + offset);
+                write_u32(&mut result, offset);
             },
             Opcode::I64Load32U(Memarg { offset, align }) => {
                 result.push(TargetOp::I64Load32U as u8);
-                write_u32(&mut result, offset_table.mem_offset as u32 + offset);
+                write_u32(&mut result, offset);
             },
             Opcode::I64Load32S(Memarg { offset, align }) => {
                 result.push(TargetOp::I64Load32S as u8);
-                write_u32(&mut result, offset_table.mem_offset as u32 + offset);
+                write_u32(&mut result, offset);
             },
             Opcode::I64Store(Memarg { offset, align }) => {
                 result.push(TargetOp::I64Store as u8);
-                write_u32(&mut result, offset_table.mem_offset as u32 + offset);
+                write_u32(&mut result, offset);
             },
             Opcode::I64Store8(Memarg { offset, align }) => {
                 result.push(TargetOp::I64Store8 as u8);
-                write_u32(&mut result, offset_table.mem_offset as u32 + offset);
+                write_u32(&mut result, offset);
             },
             Opcode::I64Store16(Memarg { offset, align }) => {
                 result.push(TargetOp::I64Store16 as u8);
-                write_u32(&mut result, offset_table.mem_offset as u32 + offset);
+                write_u32(&mut result, offset);
             },
             Opcode::I64Store32(Memarg { offset, align }) => {
                 result.push(TargetOp::I64Store32 as u8);
-                write_u32(&mut result, offset_table.mem_offset as u32 + offset);
+                write_u32(&mut result, offset);
             },
             Opcode::F32Const(v) => {
                 result.push(TargetOp::I32Const as u8);
@@ -594,57 +610,35 @@ fn write_initializers(dss: &[DataSegment], target: &mut Vec<u8>) -> Vec<usize> /
 }
 
 // DataSegment with target offsets.
-fn build_initializers(m: &Module) -> (Vec<DataSegment>, OffsetTable) {
-    let mut dss: Vec<DataSegment> = Vec::new();
+fn build_initializers(m: &Module) -> (Vec<DataSegment>, Vec<i64>, OffsetTable) {
+    let mut slot_values: Vec<i64> = Vec::new();
 
     let wasm_table = &m.tables[0];
     let wasm_globals = &m.globals;
-    let wasm_table_offset: usize = 0;
-    let wasm_globals_offset = wasm_table_offset + wasm_table.elements.len() * (4 + 4);
-    let wasm_mem_offset = wasm_globals_offset + wasm_globals.len() * 8;
 
-    let mut table_init_memory: Vec<u8> = Vec::new();
+    let wasm_table_offset: usize = 0;
     for elem in &wasm_table.elements {
         let elem = elem.unwrap_or(::std::u32::MAX);
-        write_u32(&mut table_init_memory, elem);
-        // n_locals
-        write_u32(&mut table_init_memory, if (elem as usize) < m.functions.len() {
+        let n_locals = if (elem as usize) < m.functions.len() {
             m.functions[elem as usize].locals.len() as u32
         } else {
             ::std::u32::MAX
-        });
+        };
+
+        slot_values.push(
+            (((n_locals as u64) << 32) | (elem as u64)) as i64
+        );
     }
-    assert_eq!(table_init_memory.len(), wasm_table.elements.len() * (4 + 4));
 
-    let table_ds_id = dss.len();
-    dss.push(DataSegment {
-        offset: wasm_table_offset as u32,
-        data: table_init_memory
-    });
-
-    let mut globals_init_memory: Vec<u8> = Vec::new();
+    let wasm_globals_offset: usize = slot_values.len();
     for g in wasm_globals {
         let val = g.value.reinterpret_as_i64();
-        write_u64(&mut globals_init_memory, val as u64);
+        slot_values.push(val);
     }
-    assert_eq!(globals_init_memory.len(), wasm_globals.len() * 8);
-    dss.push(DataSegment {
-        offset: wasm_globals_offset as u32,
-        data: globals_init_memory
-    });
 
-    dss.extend(m.data_segments.iter().map(|ds| {
-        let mut ds = ds.clone();
-        ds.offset += wasm_mem_offset as u32;
-        ds
-    }));
-
-    (dss, OffsetTable {
-        table_offset: wasm_table_offset,
-        globals_offset: wasm_globals_offset,
-        mem_offset: wasm_mem_offset,
-
-        table_ds_id: table_ds_id
+    (m.data_segments.clone(), slot_values, OffsetTable {
+        table_slot_offset: wasm_table_offset,
+        globals_slot_offset: wasm_globals_offset
     })
 }
 
