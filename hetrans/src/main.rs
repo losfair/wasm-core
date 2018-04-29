@@ -26,5 +26,6 @@ fn main() {
     let entry_fn = module.lookup_exported_func(&entry_fn_name).expect("Entry function not found");
 
     let result = translate_module(&module, entry_fn);
+    eprintln!("{:?}", module.functions[entry_fn].body.opcodes);
     ::std::io::stdout().write_all(&result).unwrap();
 }

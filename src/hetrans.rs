@@ -25,6 +25,7 @@ pub enum TargetOp {
 
     Nop,
     Unreachable,
+    NotSupported,
 
     Jmp,
     JmpIf,
@@ -60,6 +61,65 @@ pub enum TargetOp {
     I32Rotl,
     I32Rotr,
 
+    I32Eq,
+    I32Ne,
+    I32LtU,
+    I32LtS,
+    I32LeU,
+    I32LeS,
+    I32GtU,
+    I32GtS,
+    I32GeU,
+    I32GeS,
+
+    I32WrapI64,
+
+    I64Load,
+    I64Load8U,
+    I64Load8S,
+    I64Load16U,
+    I64Load16S,
+    I64Load32U,
+    I64Load32S,
+    I64Store,
+    I64Store8,
+    I64Store16,
+    I64Store32,
+
+    I64Const,
+    I64Ctz,
+    I64Clz,
+    I64Popcnt,
+    I64Add,
+    I64Sub,
+    I64Mul,
+    I64DivU,
+    I64DivS,
+    I64RemU,
+    I64RemS,
+    I64And,
+    I64Or,
+    I64Xor,
+    I64Shl,
+    I64ShrU,
+    I64ShrS,
+    I64Rotl,
+    I64Rotr,
+
+    I64Eq,
+    I64Ne,
+    I64LtU,
+    I64LtS,
+    I64LeU,
+    I64LeS,
+    I64GtU,
+    I64GtS,
+    I64GeU,
+    I64GeS,
+
+    I64ExtendI32U,
+    I64ExtendI32S,
+
     Never
 }
 
@@ -73,6 +133,7 @@ enum RelocType {
     LocalJmp(usize /* local opcode index */)
 }
 
+#[derive(Debug)]
 struct OffsetTable {
     table_offset: usize,
     globals_offset: usize,
@@ -93,6 +154,8 @@ pub fn translate_module(m: &Module, entry_fn: usize) -> Vec<u8> {
     let (target_dss, offset_table) = build_initializers(m);
     let init_data_relocs = write_initializers(&target_dss, &mut target_code);
 
+    eprintln!("Offsets: {:?}", offset_table);
+
     let mut functions: Vec<TargetFunction> = Vec::with_capacity(m.functions.len());
 
     for f in &m.functions {
@@ -106,7 +169,7 @@ pub fn translate_module(m: &Module, entry_fn: usize) -> Vec<u8> {
     executable.push(TargetOp::Halt as u8);
 
     for (i, f) in functions.iter().enumerate() {
-        eprintln!("Relocating function: {} -> {}", i, executable.len());
+        //eprintln!("Relocating function: {} -> {}", i, executable.len());
         function_relocs.push(executable.len());
         executable.extend_from_slice(&f.code);
     }
@@ -214,6 +277,8 @@ fn translate_function(m: &Module, f: &Function, offset_table: &OffsetTable) -> T
             Opcode::Return => {
                 result.push(TargetOp::Return as u8);
             },
+            Opcode::Nop => {},
+            Opcode::Unreachable => result.push(TargetOp::Unreachable as u8),
             Opcode::GetLocal(id) => {
                 result.push(TargetOp::GetLocal as u8);
                 write_u32(&mut result, id);
@@ -225,6 +290,23 @@ fn translate_function(m: &Module, f: &Function, offset_table: &OffsetTable) -> T
             Opcode::TeeLocal(id) => {
                 result.push(TargetOp::TeeLocal as u8);
                 write_u32(&mut result, id);
+            },
+            Opcode::GetGlobal(id) => {
+                result.push(TargetOp::I32Const as u8);
+                write_u32(&mut result, id * 8);
+                result.push(TargetOp::I64Load as u8);
+                write_u32(&mut result, offset_table.globals_offset as u32);
+            },
+            Opcode::SetGlobal(id) => {
+                result.push(TargetOp::I32Const as u8);
+                write_u32(&mut result, id * 8);
+                // (val, addr)
+
+                result.push(TargetOp::Swap2 as u8);
+                // (addr, val)
+
+                result.push(TargetOp::I64Store as u8);
+                write_u32(&mut result, offset_table.globals_offset as u32);
             },
             Opcode::Jmp(loc) => {
                 result.push(TargetOp::Jmp as u8);
@@ -272,12 +354,192 @@ fn translate_function(m: &Module, f: &Function, offset_table: &OffsetTable) -> T
                     write_u32(&mut result, ::std::u32::MAX);
                 }
             },
+            Opcode::CurrentMemory => {
+                // [current_memory] / 65536 = n_pages
+                result.push(TargetOp::CurrentMemory as u8);
+                result.push(TargetOp::I32Const as u8);
+                write_u32(&mut result, 65536 as u32);
+                result.push(TargetOp::I32DivU as u8);
+            },
+            Opcode::GrowMemory => {
+                // len_inc = n_pages * 65536
+                result.push(TargetOp::I32Const as u8);
+                write_u32(&mut result, 65536 as u32);
+                result.push(TargetOp::I32Mul as u8);
+
+                result.push(TargetOp::GrowMemory as u8);
+
+                // [current_memory] / 65536 = n_pages
+                result.push(TargetOp::I32Const as u8);
+                write_u32(&mut result, 65536 as u32);
+                result.push(TargetOp::I32DivU as u8);
+            },
             Opcode::I32Const(v) => {
                 result.push(TargetOp::I32Const as u8);
                 write_u32(&mut result, v as u32);
             },
+            Opcode::I32Clz => result.push(TargetOp::I32Clz as u8),
+            Opcode::I32Ctz => result.push(TargetOp::I32Ctz as u8),
+            Opcode::I32Popcnt => result.push(TargetOp::I32Popcnt as u8),
+            Opcode::I32Add => result.push(TargetOp::I32Add as u8),
+            Opcode::I32Sub => result.push(TargetOp::I32Sub as u8),
+            Opcode::I32Mul => result.push(TargetOp::I32Mul as u8),
+            Opcode::I32DivU => result.push(TargetOp::I32DivU as u8),
+            Opcode::I32DivS => result.push(TargetOp::I32DivS as u8),
+            Opcode::I32RemU => result.push(TargetOp::I32RemU as u8),
+            Opcode::I32RemS => result.push(TargetOp::I32RemS as u8),
+            Opcode::I32And => result.push(TargetOp::I32And as u8),
+            Opcode::I32Or => result.push(TargetOp::I32Or as u8),
+            Opcode::I32Xor => result.push(TargetOp::I32Xor as u8),
+            Opcode::I32Shl => result.push(TargetOp::I32Shl as u8),
+            Opcode::I32ShrU => result.push(TargetOp::I32ShrU as u8),
+            Opcode::I32ShrS => result.push(TargetOp::I32ShrS as u8),
+            Opcode::I32Rotl => result.push(TargetOp::I32Rotl as u8),
+            Opcode::I32Rotr => result.push(TargetOp::I32Rotr as u8),
+            Opcode::I32Eqz => {
+                result.push(TargetOp::I32Const as u8);
+                write_u32(&mut result, 0);
+                result.push(TargetOp::I32Eq as u8);
+            },
+            Opcode::I32Eq => result.push(TargetOp::I32Eq as u8),
+            Opcode::I32Ne => result.push(TargetOp::I32Ne as u8),
+            Opcode::I32LtU => result.push(TargetOp::I32LtU as u8),
+            Opcode::I32LtS => result.push(TargetOp::I32LtS as u8),
+            Opcode::I32LeU => result.push(TargetOp::I32LeU as u8),
+            Opcode::I32LeS => result.push(TargetOp::I32LeS as u8),
+            Opcode::I32GtU => result.push(TargetOp::I32GtU as u8),
+            Opcode::I32GtS => result.push(TargetOp::I32GtS as u8),
+            Opcode::I32GeU => result.push(TargetOp::I32GeU as u8),
+            Opcode::I32GeS => result.push(TargetOp::I32GeS as u8),
+            Opcode::I32WrapI64 => result.push(TargetOp::I32WrapI64 as u8),
+            Opcode::I32Load(Memarg { offset, align }) => {
+                result.push(TargetOp::I32Load as u8);
+                write_u32(&mut result, offset_table.mem_offset as u32 + offset);
+            },
+            Opcode::I32Load8U(Memarg { offset, align }) => {
+                result.push(TargetOp::I32Load8U as u8);
+                write_u32(&mut result, offset_table.mem_offset as u32 + offset);
+            },
+            Opcode::I32Load8S(Memarg { offset, align }) => {
+                result.push(TargetOp::I32Load8S as u8);
+                write_u32(&mut result, offset_table.mem_offset as u32 + offset);
+            },
+            Opcode::I32Load16U(Memarg { offset, align }) => {
+                result.push(TargetOp::I32Load16U as u8);
+                write_u32(&mut result, offset_table.mem_offset as u32 + offset);
+            },
+            Opcode::I32Load16S(Memarg { offset, align }) => {
+                result.push(TargetOp::I32Load16S as u8);
+                write_u32(&mut result, offset_table.mem_offset as u32 + offset);
+            },
+            Opcode::I32Store(Memarg { offset, align }) => {
+                result.push(TargetOp::I32Store as u8);
+                write_u32(&mut result, offset_table.mem_offset as u32 + offset);
+            },
+            Opcode::I32Store8(Memarg { offset, align }) => {
+                result.push(TargetOp::I32Store8 as u8);
+                write_u32(&mut result, offset_table.mem_offset as u32 + offset);
+            },
+            Opcode::I32Store16(Memarg { offset, align }) => {
+                result.push(TargetOp::I32Store16 as u8);
+                write_u32(&mut result, offset_table.mem_offset as u32 + offset);
+            },
+            Opcode::I64Const(v) => {
+                result.push(TargetOp::I64Const as u8);
+                write_u64(&mut result, v as u64);
+            },
+            Opcode::I64Clz => result.push(TargetOp::I64Clz as u8),
+            Opcode::I64Ctz => result.push(TargetOp::I64Ctz as u8),
+            Opcode::I64Popcnt => result.push(TargetOp::I64Popcnt as u8),
+            Opcode::I64Add => result.push(TargetOp::I64Add as u8),
+            Opcode::I64Sub => result.push(TargetOp::I64Sub as u8),
+            Opcode::I64Mul => result.push(TargetOp::I64Mul as u8),
+            Opcode::I64DivU => result.push(TargetOp::I64DivU as u8),
+            Opcode::I64DivS => result.push(TargetOp::I64DivS as u8),
+            Opcode::I64RemU => result.push(TargetOp::I64RemU as u8),
+            Opcode::I64RemS => result.push(TargetOp::I64RemS as u8),
+            Opcode::I64And => result.push(TargetOp::I64And as u8),
+            Opcode::I64Or => result.push(TargetOp::I64Or as u8),
+            Opcode::I64Xor => result.push(TargetOp::I64Xor as u8),
+            Opcode::I64Shl => result.push(TargetOp::I64Shl as u8),
+            Opcode::I64ShrU => result.push(TargetOp::I64ShrU as u8),
+            Opcode::I64ShrS => result.push(TargetOp::I64ShrS as u8),
+            Opcode::I64Rotl => result.push(TargetOp::I64Rotl as u8),
+            Opcode::I64Rotr => result.push(TargetOp::I64Rotr as u8),
+            Opcode::I64Eqz => {
+                result.push(TargetOp::I64Const as u8);
+                write_u64(&mut result, 0);
+                result.push(TargetOp::I64Eq as u8);
+            },
+            Opcode::I64Eq => result.push(TargetOp::I64Eq as u8),
+            Opcode::I64Ne => result.push(TargetOp::I64Ne as u8),
+            Opcode::I64LtU => result.push(TargetOp::I64LtU as u8),
+            Opcode::I64LtS => result.push(TargetOp::I64LtS as u8),
+            Opcode::I64LeU => result.push(TargetOp::I64LeU as u8),
+            Opcode::I64LeS => result.push(TargetOp::I64LeS as u8),
+            Opcode::I64GtU => result.push(TargetOp::I64GtU as u8),
+            Opcode::I64GtS => result.push(TargetOp::I64GtS as u8),
+            Opcode::I64GeU => result.push(TargetOp::I64GeU as u8),
+            Opcode::I64GeS => result.push(TargetOp::I64GeS as u8),
+            Opcode::I64ExtendI32U => result.push(TargetOp::I64ExtendI32U as u8),
+            Opcode::I64ExtendI32S => result.push(TargetOp::I64ExtendI32S as u8),
+            Opcode::I64Load(Memarg { offset, align }) => {
+                result.push(TargetOp::I64Load as u8);
+                write_u32(&mut result, offset_table.mem_offset as u32 + offset);
+            },
+            Opcode::I64Load8U(Memarg { offset, align }) => {
+                result.push(TargetOp::I64Load8U as u8);
+                write_u32(&mut result, offset_table.mem_offset as u32 + offset);
+            },
+            Opcode::I64Load8S(Memarg { offset, align }) => {
+                result.push(TargetOp::I64Load8S as u8);
+                write_u32(&mut result, offset_table.mem_offset as u32 + offset);
+            },
+            Opcode::I64Load16U(Memarg { offset, align }) => {
+                result.push(TargetOp::I64Load16U as u8);
+                write_u32(&mut result, offset_table.mem_offset as u32 + offset);
+            },
+            Opcode::I64Load16S(Memarg { offset, align }) => {
+                result.push(TargetOp::I64Load16S as u8);
+                write_u32(&mut result, offset_table.mem_offset as u32 + offset);
+            },
+            Opcode::I64Load32U(Memarg { offset, align }) => {
+                result.push(TargetOp::I64Load32U as u8);
+                write_u32(&mut result, offset_table.mem_offset as u32 + offset);
+            },
+            Opcode::I64Load32S(Memarg { offset, align }) => {
+                result.push(TargetOp::I64Load32S as u8);
+                write_u32(&mut result, offset_table.mem_offset as u32 + offset);
+            },
+            Opcode::I64Store(Memarg { offset, align }) => {
+                result.push(TargetOp::I64Store as u8);
+                write_u32(&mut result, offset_table.mem_offset as u32 + offset);
+            },
+            Opcode::I64Store8(Memarg { offset, align }) => {
+                result.push(TargetOp::I64Store8 as u8);
+                write_u32(&mut result, offset_table.mem_offset as u32 + offset);
+            },
+            Opcode::I64Store16(Memarg { offset, align }) => {
+                result.push(TargetOp::I64Store16 as u8);
+                write_u32(&mut result, offset_table.mem_offset as u32 + offset);
+            },
+            Opcode::I64Store32(Memarg { offset, align }) => {
+                result.push(TargetOp::I64Store32 as u8);
+                write_u32(&mut result, offset_table.mem_offset as u32 + offset);
+            },
+            Opcode::F32Const(v) => {
+                result.push(TargetOp::I32Const as u8);
+                write_u32(&mut result, v as u32);
+            },
+            Opcode::F64Const(v) => {
+                result.push(TargetOp::I64Const as u8);
+                write_u64(&mut result, v as u64);
+            },
+            Opcode::F32ReinterpretI32 | Opcode::I32ReinterpretF32
+                | Opcode::F64ReinterpretI64 | Opcode::I64ReinterpretF64 => {},
             _ => {
-                result.push(TargetOp::Unreachable as u8);
+                eprintln!("Not implemented: {:?}", op);
+                result.push(TargetOp::NotSupported as u8);
             }
         }
     }
