@@ -165,7 +165,7 @@ pub fn translate_module(m: &Module, entry_fn: usize, mni: &mut MapNativeInvoke) 
     let (target_dss, slot_values, offset_table) = build_initializers(m);
     let _init_data_relocs = write_initializers(&target_dss, &mut target_code);
 
-    eprintln!("Offsets: {:?}", offset_table);
+    //eprintln!("Offsets: {:?}", offset_table);
 
     let mut functions: Vec<TargetFunction> = Vec::with_capacity(m.functions.len());
 
@@ -229,7 +229,7 @@ pub fn translate_module(m: &Module, entry_fn: usize, mni: &mut MapNativeInvoke) 
         // On little endian systems this is the lower 32 bits of a 64-bit value.
         let function_id = LittleEndian::read_u32(elem);
         if function_id != ::std::u32::MAX {
-            eprintln!("Relocating: {} -> {}", function_id, function_relocs[function_id as usize]);
+            //eprintln!("Relocating: {} -> {}", function_id, function_relocs[function_id as usize]);
             LittleEndian::write_u32(elem, function_relocs[function_id as usize] as u32);
         }
     }
@@ -588,7 +588,9 @@ fn translate_function(m: &Module, f: &Function, offset_table: &OffsetTable, mni:
                 );
             },
             _ => {
-                eprintln!("Not implemented: {:?}", op);
+                if cfg!(feature = "debug") {
+                    eprintln!("Not implemented: {:?}", op);
+                }
                 result.push(TargetOp::NotSupported as u8);
             }
         }
