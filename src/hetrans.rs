@@ -128,6 +128,15 @@ pub enum TargetOp {
     Never
 }
 
+pub trait MapNativeInvoke {
+    fn map_native_invoke(&mut self, module: &str, field: &str) -> Option<u32>;
+}
+
+pub struct NullMapNativeInvoke;
+impl MapNativeInvoke for NullMapNativeInvoke {
+    fn map_native_invoke(&mut self, _module: &str, _field: &str) -> Option<u32> { None }
+}
+
 struct Reloc {
     code_loc: usize,
     ty: RelocType
@@ -150,7 +159,7 @@ struct TargetFunction {
     generic_relocs: Vec<Reloc>
 }
 
-pub fn translate_module(m: &Module, entry_fn: usize) -> Vec<u8> {
+pub fn translate_module(m: &Module, entry_fn: usize, mni: &mut MapNativeInvoke) -> Vec<u8> {
     let mut target_code: Vec<u8> = Vec::new();
 
     let (target_dss, slot_values, offset_table) = build_initializers(m);
@@ -161,7 +170,7 @@ pub fn translate_module(m: &Module, entry_fn: usize) -> Vec<u8> {
     let mut functions: Vec<TargetFunction> = Vec::with_capacity(m.functions.len());
 
     for f in &m.functions {
-        functions.push(translate_function(&m, f, &offset_table));
+        functions.push(translate_function(&m, f, &offset_table, mni));
     }
 
     let mut slot_initializer_relocs: Vec<usize> = Vec::with_capacity(functions.len());
@@ -249,7 +258,7 @@ fn build_call(m: &Module, out: &mut Vec<u8>, target: usize) -> usize /* reloc */
     reloc_point
 }
 
-fn translate_function(m: &Module, f: &Function, offset_table: &OffsetTable) -> TargetFunction {
+fn translate_function(m: &Module, f: &Function, offset_table: &OffsetTable, mni: &mut MapNativeInvoke) -> TargetFunction {
     let mut result: Vec<u8> = Vec::new();
     let mut relocs: Vec<Reloc> = Vec::new();
     let opcodes = &f.body.opcodes;
@@ -556,20 +565,27 @@ fn translate_function(m: &Module, f: &Function, offset_table: &OffsetTable) -> T
             Opcode::NativeInvoke(id) => {
                 let native = &m.natives[id as usize];
 
-                if native.module != "hexagon_e" {
-                    panic!("NativeInvoke with a module other than `hexagon_e` is not supported. Got: {}", native.module);
-                }
-
-                if !native.field.starts_with("syscall_") {
-                    panic!("Invalid NativeInvoke field prefix; Expecting `syscall_`");
-                }
-
-                let ni_id: u32 = native.field.splitn(2, "_").nth(1).unwrap().parse().unwrap_or_else(|_| {
-                    panic!("Unable to parse NativeInvoke id");
-                });
-
                 result.push(TargetOp::NativeInvoke as u8);
-                write_u32(&mut result, ni_id);
+                write_u32(
+                    &mut result,
+                    if let Some(ni_id) = mni.map_native_invoke(&native.module, &native.field) {
+                        ni_id
+                    } else {
+                        if native.module != "hexagon_e" {
+                            panic!("NativeInvoke with a module other than `hexagon_e` is not supported. Got: {}", native.module);
+                        }
+
+                        if !native.field.starts_with("syscall_") {
+                            panic!("Invalid NativeInvoke field prefix; Expecting `syscall_`");
+                        }
+
+                        let ni_id: u32 = native.field.splitn(2, "_").nth(1).unwrap().parse().unwrap_or_else(|_| {
+                            panic!("Unable to parse NativeInvoke id");
+                        });
+
+                        ni_id
+                    }
+                );
             },
             _ => {
                 eprintln!("Not implemented: {:?}", op);
