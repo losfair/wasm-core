@@ -2,6 +2,8 @@
 
 [![Crates.io](https://img.shields.io/crates/v/wasm-core.svg)](https://crates.io/crates/wasm-core)
 
+**NOTE: This repository is now deprecated due to multiple design issues. LLVM-generated WebAssembly code is still expected to run without problems (by July 28, 2018), but users are advised to move to other implementations for future usage.**
+
 Portable WebAssembly implementation intended to run everywhere.
 
 -----
